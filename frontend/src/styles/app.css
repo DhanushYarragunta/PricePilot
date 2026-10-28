@@ -1,0 +1,1483 @@
+/*
+ * Screen styles.
+ *
+ * ── The layout idea: a ledger, not a card grid ───────────────────────────────
+ * The dashboard is one full-width list of hairline-separated rows. The alternative — a grid of
+ * identical rounded cards, each with the same soft grey shadow — would make a ₹1,29,900 laptop and a
+ * ₹499 kettle look like equally weighted tiles, and it would put the prices in a staggered diagonal
+ * across the screen where they cannot be compared. Rows put every price in the same column, which is
+ * what turns "which of these fell?" from reading into scanning. It is also what a price list has
+ * looked like since long before screens.
+ *
+ * Specificity is kept flat on purpose: one class per rule, no element-plus-class combinations, and
+ * no nesting deeper than a direct child. Padding collisions between a `.section` rule and a `.panel`
+ * rule are the usual way a stylesheet starts fighting itself, so sections here never set padding on
+ * anything they contain.
+ */
+
+/* ═══════════════════════════════════════════════════════════ shell */
+
+.shell {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.masthead {
+  background: var(--ink);
+  color: var(--ink-inverse);
+  border-bottom: 1px solid var(--ink);
+}
+
+.masthead-inner {
+  display: flex;
+  align-items: center;
+  gap: var(--s-5);
+  min-height: 60px;
+}
+
+.wordmark {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.12em;
+  font-family: var(--face-display);
+  font-size: 1.3rem;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  text-decoration: none;
+  color: inherit;
+}
+
+/*
+ * The wordmark's own small piece of wit: the rupee sign stands in for nothing, it simply sits where
+ * a logo mark would, set in the display face at the same optical weight as the letters. One mark,
+ * no lockup, no gradient.
+ */
+.wordmark-mark {
+  color: var(--low);
+  font-weight: 700;
+}
+
+.nav {
+  display: flex;
+  align-items: center;
+  gap: var(--s-1);
+  margin-left: auto;
+}
+
+.nav-link {
+  padding: 0.35rem 0.75rem;
+  border-radius: var(--r-control);
+  font-size: var(--t-small);
+  font-weight: 500;
+  color: #c3cddd;
+  text-decoration: none;
+  white-space: nowrap;
+  transition: background var(--motion-fast) ease, color var(--motion-fast) ease;
+}
+
+.nav-link:hover {
+  background: rgba(255, 255, 255, 0.09);
+  color: var(--ink-inverse);
+}
+
+.nav-link-on {
+  background: rgba(255, 255, 255, 0.14);
+  color: #ffffff;
+}
+
+.main {
+  flex: 1 1 auto;
+  padding: var(--s-6) 0 var(--s-8);
+}
+
+.footer {
+  border-top: var(--line);
+  padding: var(--s-5) 0;
+  font-size: var(--t-small);
+  color: var(--ink-soft);
+}
+
+.footer-inner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2) var(--s-5);
+}
+
+/* ═══════════════════════════════════════════════════════════ page heads */
+
+.page-head {
+  margin-bottom: var(--s-5);
+}
+
+.page-head-row {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--s-5);
+  flex-wrap: wrap;
+}
+
+.page-sub {
+  margin-top: var(--s-2);
+  color: var(--ink-soft);
+}
+
+.back-link {
+  display: inline-block;
+  margin-bottom: var(--s-3);
+  font-size: var(--t-small);
+  color: var(--ink-soft);
+  text-decoration: none;
+}
+
+.back-link:hover {
+  color: var(--ink);
+  text-decoration: underline;
+}
+
+/* ═══════════════════════════════════════════════════════════ add-product bar */
+
+.addbar {
+  display: flex;
+  gap: var(--s-3);
+  align-items: flex-start;
+  padding: var(--s-4) var(--s-5);
+  background: var(--panel);
+  border: var(--line);
+  margin-bottom: var(--s-5);
+}
+
+.addbar-url {
+  flex: 1 1 24rem;
+  min-width: 14rem;
+}
+
+.addbar-target {
+  flex: 0 0 9.5rem;
+}
+
+.addbar-note {
+  flex: 1 1 100%;
+  margin-top: var(--s-3);
+}
+
+.addbar-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  flex: 0 0 auto;
+  padding-top: 1.7rem;
+}
+
+.addbar-hint {
+  flex: 1 1 100%;
+  margin-top: var(--s-3);
+  padding-top: var(--s-3);
+  border-top: var(--line);
+  font-size: var(--t-small);
+  color: var(--ink-soft);
+}
+
+/* ═══════════════════════════════════════════════════════════ ledger */
+
+.ledger {
+  background: var(--panel);
+  border: var(--line);
+}
+
+/*
+ * A row is a grid rather than a flex line so that the price column lands at the same x on every
+ * row regardless of how long the title is. That alignment is the entire point of the layout: prices
+ * that share an edge can be compared without reading them.
+ */
+.ledger-row {
+  display: grid;
+  grid-template-columns: 56px 92px minmax(0, 1fr) 150px 112px;
+  align-items: center;
+  gap: var(--s-4);
+  padding: var(--s-4) var(--s-5);
+  border-bottom: var(--line);
+  text-decoration: none;
+  color: inherit;
+  transition: background var(--motion-fast) ease;
+}
+
+.ledger-row:last-child {
+  border-bottom: 0;
+}
+
+.ledger-row:hover {
+  background: var(--panel-sunk);
+}
+
+.ledger-thumb {
+  width: 56px;
+  height: 56px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--panel-sunk);
+  border: var(--line);
+  overflow: hidden;
+}
+
+.ledger-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.ledger-thumb-empty {
+  font-family: var(--face-display);
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--ink-faint);
+}
+
+.ledger-range {
+  width: 92px;
+}
+
+/*
+ * The range mark: a hairline track with one dot on it, plus two four-letter end labels.
+ *
+ * Drawn with a border rather than a filled bar because a filled bar would read as a progress
+ * indicator — something being 40% complete — when what it means is "today's price is 40% of the way
+ * up the range we have seen". The dot is the datum; the track is only a scale.
+ */
+.rangemark {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.rangemark-empty {
+  height: 20px;
+}
+
+.rangemark-track {
+  position: relative;
+  height: 7px;
+  border-bottom: 1px solid var(--rule-strong);
+}
+
+.rangemark-dot {
+  position: absolute;
+  bottom: -3px;
+  width: 7px;
+  height: 7px;
+  margin-left: -3.5px;
+  border-radius: 50%;
+  background: var(--ink);
+}
+
+.rangemark-dot-low {
+  background: var(--low);
+  box-shadow: 0 0 0 2px var(--low-wash);
+}
+
+.rangemark-ends {
+  display: flex;
+  justify-content: space-between;
+  font-size: 9px;
+  letter-spacing: 0.04em;
+  color: var(--ink-faint);
+}
+
+.ledger-title {
+  font-weight: 600;
+  line-height: 1.35;
+  /* Two lines, then clipped. A product title from Amazon.in can run to 200 characters of
+     specifications, and letting one row grow to five lines destroys the column rhythm. */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.ledger-meta {
+  margin-top: var(--s-1);
+  font-size: var(--t-small);
+  color: var(--ink-soft);
+}
+
+.ledger-price {
+  text-align: right;
+}
+
+.ledger-price-now {
+  font-size: var(--t-lead);
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+}
+
+.ledger-price-from {
+  font-size: var(--t-micro);
+  color: var(--ink-faint);
+  margin-bottom: 0.1rem;
+}
+
+.ledger-verdict {
+  text-align: right;
+}
+
+.ledger-empty {
+  padding: var(--s-7) var(--s-5);
+  text-align: center;
+}
+
+@media (max-width: 860px) {
+  .ledger-row {
+    grid-template-columns: 48px minmax(0, 1fr) auto;
+    row-gap: var(--s-2);
+  }
+
+  .ledger-range {
+    display: none;
+  }
+
+  .ledger-verdict {
+    grid-column: 2 / 4;
+    text-align: left;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════ money and movement */
+
+.money {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+/*
+ * The rupee glyph optically outweighs the numerals it precedes at large sizes, so it is set a touch
+ * smaller and lighter. Without this the eye reads "₹" first and the number second, which is exactly
+ * backwards for the one piece of information the page exists to show.
+ */
+.money-symbol {
+  font-size: 0.78em;
+  font-weight: 500;
+  margin-right: 0.08em;
+  color: var(--ink-soft);
+}
+
+.money-struck {
+  color: var(--ink-faint);
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
+}
+
+.delta {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.25em;
+  font-size: var(--t-small);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.delta-fall {
+  color: var(--fall);
+}
+
+.delta-rise {
+  color: var(--rise);
+}
+
+.delta-flat {
+  color: var(--ink-faint);
+  font-weight: 500;
+}
+
+.delta-arrow {
+  font-size: 0.85em;
+}
+
+/* The one place saffron appears. */
+.lowflag {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3em;
+  padding: 0.1rem 0.5rem;
+  border: 1px solid var(--low);
+  border-radius: var(--r-control);
+  background: var(--low-wash);
+  color: #6b4405;
+  font-size: var(--t-micro);
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.targetflag {
+  display: inline-block;
+  padding: 0.1rem 0.5rem;
+  border: 1px solid var(--fall);
+  border-radius: var(--r-control);
+  background: var(--fall-wash);
+  color: var(--fall);
+  font-size: var(--t-micro);
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+/* ═══════════════════════════════════════════════════════════ verdict */
+
+.verdict-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.15rem 0.6rem;
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--r-control);
+  font-size: var(--t-micro);
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.verdict-chip-good {
+  border-color: var(--fall);
+  background: var(--fall-wash);
+  color: var(--fall);
+}
+
+.verdict-chip-wait {
+  border-color: var(--rise);
+  background: var(--rise-wash);
+  color: var(--rise);
+}
+
+.verdict-chip-flat {
+  color: var(--ink-soft);
+}
+
+.verdict-chip-stale {
+  /* Dashed, not greyed. A stale verdict is still real information; it just no longer describes
+     the price on screen, and a dashed edge says "provisional" without hiding the content. */
+  border-style: dashed;
+}
+
+.verdict-block {
+  display: grid;
+  gap: var(--s-4);
+}
+
+.verdict-headline {
+  font-family: var(--face-display);
+  font-size: var(--t-h3);
+  font-weight: 700;
+  letter-spacing: -0.015em;
+  max-width: 34ch;
+}
+
+.verdict-reasoning {
+  color: var(--ink-soft);
+  max-width: var(--measure);
+}
+
+.verdict-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2) var(--s-5);
+  padding-top: var(--s-4);
+  border-top: var(--line);
+  font-size: var(--t-small);
+}
+
+.verdict-fact-label {
+  color: var(--ink-faint);
+  margin-right: 0.4em;
+}
+
+.verdict-warning {
+  display: grid;
+  gap: var(--s-2);
+  padding: var(--s-4);
+  border-left: 3px solid var(--rise);
+  background: var(--rise-wash);
+}
+
+.verdict-warning-title {
+  font-weight: 700;
+  color: var(--rise);
+}
+
+.verdict-stale-note {
+  padding: var(--s-3) var(--s-4);
+  background: var(--panel-sunk);
+  border: 1px dashed var(--rule-strong);
+  font-size: var(--t-small);
+  color: var(--ink-soft);
+}
+
+.verdict-history {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+}
+
+.verdict-history-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  padding: var(--s-2) var(--s-3);
+  border: var(--line);
+  background: var(--panel-sunk);
+  font-size: var(--t-micro);
+}
+
+/* ═══════════════════════════════════════════════════════════ product page */
+
+.product-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  gap: var(--s-5);
+  align-items: start;
+}
+
+@media (max-width: 1000px) {
+  .product-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.product-hero {
+  display: flex;
+  gap: var(--s-5);
+  align-items: flex-start;
+  padding: var(--s-5);
+  background: var(--panel);
+  border: var(--line);
+  margin-bottom: var(--s-5);
+}
+
+.product-hero-image {
+  flex: 0 0 120px;
+  width: 120px;
+  height: 120px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--panel-sunk);
+  border: var(--line);
+  overflow: hidden;
+}
+
+.product-hero-image img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.product-hero-body {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.product-title {
+  font-family: var(--face-display);
+  font-size: var(--t-h2);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+}
+
+/*
+ * The price is the largest thing on the page, by a long way. Everything else — the title, the
+ * retailer, the chart axis — is sized relative to it, which is the opposite of the usual dashboard
+ * arrangement where the heading dominates and the number it describes is set in body copy.
+ */
+.product-price {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--s-2) var(--s-4);
+  margin-top: var(--s-4);
+}
+
+.product-price-now {
+  font-family: var(--face-text);
+  font-size: var(--t-price);
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -0.03em;
+}
+
+.product-price-meta {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s-3);
+  flex-wrap: wrap;
+}
+
+/*
+ * The single orchestrated motion in the application.
+ *
+ * When a refresh returns a different number, the price lifts and settles once. Nothing else in the
+ * app animates on load, on scroll, or on hover — so when this moves, it means a retailer's price
+ * actually changed in the last second, and it is worth looking at. Spending the motion budget in one
+ * place is what gives it that meaning.
+ */
+@keyframes price-settle {
+  0% {
+    transform: translateY(-0.22em);
+    opacity: 0;
+  }
+  60% {
+    transform: translateY(0.03em);
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+.product-price-changed {
+  animation: price-settle var(--motion-slow) cubic-bezier(0.2, 0.9, 0.3, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .product-price-changed {
+    animation: none;
+  }
+}
+
+.product-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-3);
+  margin-top: var(--s-5);
+  padding-top: var(--s-4);
+  border-top: var(--line);
+}
+
+.product-allowance {
+  width: 100%;
+  font-size: var(--t-micro);
+  color: var(--ink-faint);
+}
+
+/* ═══════════════════════════════════════════════════════════ stats strip */
+
+.stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  border: var(--line);
+  background: var(--panel);
+  margin-bottom: var(--s-5);
+}
+
+.stat {
+  padding: var(--s-4) var(--s-5);
+  border-right: var(--line);
+}
+
+.stat:last-child {
+  border-right: 0;
+}
+
+.stat-label {
+  font-size: var(--t-small);
+  color: var(--ink-soft);
+}
+
+.stat-value {
+  margin-top: var(--s-1);
+  font-size: var(--t-h3);
+  font-weight: 700;
+  letter-spacing: -0.015em;
+}
+
+.stat-note {
+  margin-top: var(--s-1);
+  font-size: var(--t-micro);
+  color: var(--ink-faint);
+}
+
+@media (max-width: 700px) {
+  .stat {
+    border-right: 0;
+    border-bottom: var(--line);
+  }
+
+  .stat:last-child {
+    border-bottom: 0;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════ chart */
+
+.chart {
+  width: 100%;
+  display: block;
+  overflow: visible;
+}
+
+/*
+ * Axis labels, set in the body face at the size of a caption. An SVG does not inherit the page's
+ * font stack through `font-family: inherit` reliably across browsers, so the family is named here.
+ */
+.chart-axis {
+  font-family: var(--face-text);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  fill: var(--ink-faint);
+}
+
+.chart-low {
+  font-family: var(--face-text);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  fill: #8a5a0a;
+}
+
+.chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2) var(--s-5);
+  padding: var(--s-3) var(--s-5);
+  border-top: var(--line);
+  font-size: var(--t-small);
+}
+
+.chart-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  color: inherit;
+}
+
+.chart-legend-item[aria-pressed='false'] {
+  color: var(--ink-faint);
+}
+
+.chart-legend-swatch {
+  width: 14px;
+  height: 3px;
+  flex: none;
+}
+
+.chart-tip {
+  position: absolute;
+  pointer-events: none;
+  padding: var(--s-2) var(--s-3);
+  background: var(--ink);
+  color: var(--ink-inverse);
+  font-size: var(--t-micro);
+  white-space: nowrap;
+  transform: translate(-50%, -115%);
+  z-index: 3;
+}
+
+.chart-wrap {
+  position: relative;
+}
+
+.chart-empty {
+  padding: var(--s-7) var(--s-5);
+  text-align: center;
+  color: var(--ink-soft);
+}
+
+/* ═══════════════════════════════════════════════════════════ tables */
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--t-small);
+}
+
+.table th {
+  padding: var(--s-3) var(--s-5);
+  border-bottom: var(--line);
+  text-align: left;
+  font-weight: 600;
+  color: var(--ink-soft);
+  white-space: nowrap;
+}
+
+.table td {
+  padding: var(--s-3) var(--s-5);
+  border-bottom: var(--line);
+  vertical-align: top;
+}
+
+.table tr:last-child td {
+  border-bottom: 0;
+}
+
+.table-num {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.table-scroll {
+  overflow-x: auto;
+}
+
+.table-row-primary {
+  background: var(--panel-sunk);
+}
+
+.retailer-name {
+  font-weight: 600;
+}
+
+.retailer-link {
+  font-size: var(--t-micro);
+  color: var(--ink-soft);
+}
+
+/* ═══════════════════════════════════════════════════════════ status badges */
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.1rem 0.5rem;
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--r-control);
+  background: var(--panel-sunk);
+  font-size: var(--t-micro);
+  font-weight: 600;
+  white-space: nowrap;
+  color: var(--ink-soft);
+}
+
+.badge-ok {
+  border-color: var(--fall);
+  background: var(--fall-wash);
+  color: var(--fall);
+}
+
+.badge-warn {
+  border-color: var(--low);
+  background: var(--low-wash);
+  color: #6b4405;
+}
+
+.badge-bad {
+  border-color: var(--rise);
+  background: var(--rise-wash);
+  color: var(--rise);
+}
+
+/* ═══════════════════════════════════════════════════════════ check log */
+
+/*
+ * The signature panel: every scrape attempt this product has produced, with the outcome, the
+ * strategy that read the price, the HTTP status and the latency. No price tracker shows this. It is
+ * here because the claim "every price is read from the retailer's page" is worth nothing unless it
+ * can be checked, and this is the receipt.
+ */
+.checklog {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--t-micro);
+}
+
+.checklog th {
+  padding: var(--s-2) var(--s-4);
+  border-bottom: var(--line);
+  text-align: left;
+  font-weight: 600;
+  color: var(--ink-faint);
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+}
+
+.checklog td {
+  padding: var(--s-2) var(--s-4);
+  border-bottom: 1px solid #edf1f5;
+  white-space: nowrap;
+}
+
+.checklog tr:last-child td {
+  border-bottom: 0;
+}
+
+/* A 2px rule in the outcome column, so the shape of a bad run is visible before any text is read. */
+.checklog-mark {
+  width: 3px;
+  padding: 0;
+  background: var(--rule);
+}
+
+.checklog-mark-ok {
+  background: var(--fall);
+}
+
+.checklog-mark-bad {
+  background: var(--rise);
+}
+
+.checklog-mark-skip {
+  background: var(--rule-strong);
+}
+
+.checklog-error {
+  max-width: 28ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--rise);
+}
+
+.checklog-note {
+  padding: var(--s-3) var(--s-4);
+  border-top: var(--line);
+  font-size: var(--t-micro);
+  color: var(--ink-faint);
+}
+
+/* ═══════════════════════════════════════════════════════════ sidebar cards */
+
+.side {
+  display: grid;
+  gap: var(--s-5);
+  position: sticky;
+  top: var(--s-5);
+}
+
+@media (max-width: 1000px) {
+  .side {
+    position: static;
+  }
+}
+
+.side-rows {
+  display: grid;
+  gap: var(--s-3);
+}
+
+.side-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s-3);
+  font-size: var(--t-small);
+}
+
+.side-row-label {
+  color: var(--ink-soft);
+}
+
+.side-row-value {
+  font-weight: 600;
+  text-align: right;
+}
+
+/* ═══════════════════════════════════════════════════════════ alerts feed */
+
+.feed-item {
+  display: grid;
+  grid-template-columns: 4px minmax(0, 1fr) auto;
+  gap: var(--s-4);
+  padding: var(--s-4) var(--s-5);
+  border-bottom: var(--line);
+}
+
+.feed-item:last-child {
+  border-bottom: 0;
+}
+
+.feed-mark {
+  background: var(--rule-strong);
+}
+
+.feed-mark-good {
+  background: var(--fall);
+}
+
+.feed-mark-low {
+  background: var(--low);
+}
+
+.feed-kind {
+  font-weight: 600;
+}
+
+.feed-message {
+  margin-top: var(--s-1);
+  color: var(--ink-soft);
+  font-size: var(--t-small);
+}
+
+.feed-undelivered {
+  margin-top: var(--s-2);
+  padding: var(--s-2) var(--s-3);
+  background: var(--rise-wash);
+  border-left: 2px solid var(--rise);
+  font-size: var(--t-micro);
+  color: var(--rise);
+}
+
+.feed-when {
+  text-align: right;
+  font-size: var(--t-micro);
+  color: var(--ink-faint);
+  white-space: nowrap;
+}
+
+/*
+ * The dated headings.
+ *
+ * Alerts arrive in bursts — a sale weekend produces nine in an afternoon and then nothing for a
+ * fortnight — so a flat list gives no sense of rhythm. A day heading above each run turns the gaps
+ * into information: "nothing for six days, then four on Friday" is the shape of a sale, and it is
+ * visible here without anybody computing it.
+ */
+.feed-group {
+  margin-bottom: var(--s-6);
+}
+
+.feed-day {
+  margin-bottom: var(--s-3);
+  font-family: var(--face-text);
+  font-size: var(--t-small);
+  font-weight: 600;
+  color: var(--ink-soft);
+}
+
+.feed-product {
+  margin-top: var(--s-1);
+  font-family: var(--face-text);
+  font-size: var(--t-body);
+  font-weight: 400;
+}
+
+.feed-price {
+  font-size: var(--t-lead);
+  font-weight: 600;
+  text-align: right;
+  white-space: nowrap;
+}
+
+/* ═══════════════════════════════════════════════════════════ metrics page */
+
+.metric-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: var(--s-5);
+  margin-bottom: var(--s-5);
+}
+
+.headline-metric {
+  padding: var(--s-5);
+  background: var(--panel);
+  border: var(--line);
+}
+
+.headline-metric-value {
+  font-family: var(--face-display);
+  font-size: var(--t-h1);
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: -0.03em;
+}
+
+.headline-metric-label {
+  margin-top: var(--s-3);
+  font-weight: 600;
+}
+
+.headline-metric-basis {
+  margin-top: var(--s-2);
+  font-size: var(--t-small);
+  color: var(--ink-soft);
+}
+
+/*
+ * A bar drawn in the table cell itself rather than in a chart library. A success rate per host is
+ * a one-dimensional comparison, and a row of bars sharing a left edge answers it faster than a
+ * chart with axes and a legend would — while adding nothing to the bundle.
+ */
+.bar {
+  position: relative;
+  height: 6px;
+  min-width: 60px;
+  background: var(--panel-sunk);
+  border: 1px solid var(--rule);
+}
+
+.bar-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: var(--ink);
+}
+
+.bar-fill-ok {
+  background: var(--fall);
+}
+
+.bar-fill-warn {
+  background: var(--low);
+}
+
+.bar-fill-bad {
+  background: var(--rise);
+}
+
+.window-switch {
+  display: inline-flex;
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--r-control);
+  overflow: hidden;
+}
+
+.window-switch button {
+  padding: 0.3rem 0.8rem;
+  border: 0;
+  border-right: 1px solid var(--rule-strong);
+  background: var(--panel);
+  font-size: var(--t-micro);
+  font-weight: 600;
+  color: var(--ink-soft);
+  cursor: pointer;
+}
+
+.window-switch button:last-child {
+  border-right: 0;
+}
+
+.window-switch button[aria-pressed='true'] {
+  background: var(--ink);
+  color: var(--ink-inverse);
+}
+
+/* ═══════════════════════════════════════════════════════════ auth and landing */
+
+.auth {
+  max-width: 26rem;
+  margin: var(--s-7) auto;
+}
+
+.auth-panel {
+  padding: var(--s-6);
+  background: var(--panel);
+  border: var(--line);
+}
+
+.auth-switch {
+  margin-top: var(--s-5);
+  padding-top: var(--s-4);
+  border-top: var(--line);
+  font-size: var(--t-small);
+  color: var(--ink-soft);
+}
+
+/*
+ * The landing hero.
+ *
+ * The thing that is most characteristic of this product is not a tagline — it is a price falling.
+ * So the hero is a price, large, with the fall rendered beneath it exactly as the real interface
+ * renders one, over a real step line. A visitor sees the product's actual output before reading a
+ * word about it.
+ */
+.hero {
+  padding: var(--s-8) 0 var(--s-7);
+  border-bottom: var(--line);
+}
+
+.hero-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr);
+  gap: var(--s-7);
+  align-items: center;
+}
+
+@media (max-width: 900px) {
+  .hero-grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--s-6);
+  }
+}
+
+.hero-title {
+  font-family: var(--face-display);
+  font-size: var(--t-hero);
+  font-weight: 800;
+  line-height: 0.98;
+  letter-spacing: -0.04em;
+}
+
+.hero-sub {
+  margin-top: var(--s-5);
+  font-size: var(--t-lead);
+  line-height: 1.5;
+  color: var(--ink-soft);
+  max-width: 44ch;
+}
+
+.hero-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-3);
+  margin-top: var(--s-6);
+}
+
+.hero-demo {
+  padding: var(--s-5);
+  background: var(--panel);
+  border: var(--line);
+}
+
+.hero-demo-title {
+  font-size: var(--t-small);
+  font-weight: 600;
+}
+
+.hero-demo-price {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s-4);
+  margin: var(--s-4) 0;
+}
+
+.hero-demo-now {
+  font-size: var(--t-price);
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -0.03em;
+}
+
+.hero-demo-foot {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--s-4);
+  margin-top: var(--s-4);
+  padding-top: var(--s-3);
+  border-top: var(--line);
+  font-size: var(--t-micro);
+  color: var(--ink-faint);
+}
+
+.section {
+  padding: var(--s-7) 0;
+}
+
+.section-title {
+  font-family: var(--face-display);
+  font-size: var(--t-h2);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  margin-bottom: var(--s-5);
+}
+
+/*
+ * Three claims, each with the mechanism underneath it rather than a feature name. Set as rows with
+ * a hairline between, not as three cards — the content is a list of three things, so it is a list.
+ */
+.claims {
+  border-top: var(--line);
+}
+
+.claim {
+  display: grid;
+  grid-template-columns: minmax(0, 20rem) minmax(0, 1fr);
+  gap: var(--s-5);
+  padding: var(--s-5) 0;
+  border-bottom: var(--line);
+}
+
+@media (max-width: 760px) {
+  .claim {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--s-2);
+  }
+}
+
+.claim-head {
+  font-family: var(--face-display);
+  font-size: var(--t-h3);
+  font-weight: 700;
+  letter-spacing: -0.015em;
+}
+
+.claim-body {
+  color: var(--ink-soft);
+}
+
+.retailer-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+}
+
+.retailer-pill {
+  padding: 0.2rem 0.7rem;
+  border: var(--line);
+  border-radius: var(--r-control);
+  background: var(--panel);
+  font-size: var(--t-small);
+  font-weight: 500;
+}
+
+/* ═══════════════════════════════════════════════════════════ feedback */
+
+.toasts {
+  position: fixed;
+  right: var(--s-5);
+  bottom: var(--s-5);
+  z-index: 50;
+  display: grid;
+  gap: var(--s-3);
+  width: min(26rem, calc(100vw - 2 * var(--s-5)));
+}
+
+.toast {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s-3);
+  padding: var(--s-4);
+  background: var(--panel);
+  border: 1px solid var(--ink);
+  border-left-width: 3px;
+}
+
+.toast-ok {
+  border-left-color: var(--fall);
+}
+
+.toast-bad {
+  border-left-color: var(--rise);
+}
+
+.toast-body {
+  flex: 1 1 auto;
+  font-size: var(--t-small);
+}
+
+.toast-title {
+  font-weight: 600;
+  margin-bottom: 0.15rem;
+}
+
+.toast-close {
+  flex: none;
+  padding: 0 0.3rem;
+  border: 0;
+  background: none;
+  color: var(--ink-faint);
+  cursor: pointer;
+  line-height: 1;
+  font-size: 1.1rem;
+}
+
+.toast-close:hover {
+  color: var(--ink);
+}
+
+.notice {
+  padding: var(--s-4);
+  background: var(--panel);
+  border: var(--line);
+  border-left: 3px solid var(--rule-strong);
+  font-size: var(--t-small);
+}
+
+.notice-bad {
+  border-left-color: var(--rise);
+  background: var(--rise-wash);
+  color: var(--rise);
+}
+
+.notice-info {
+  border-left-color: var(--ink);
+}
+
+.empty {
+  display: grid;
+  gap: var(--s-4);
+  justify-items: center;
+  padding: var(--s-7) var(--s-5);
+  text-align: center;
+}
+
+.empty-title {
+  font-family: var(--face-display);
+  font-size: var(--t-h3);
+  font-weight: 700;
+  letter-spacing: -0.015em;
+}
+
+.empty-body {
+  color: var(--ink-soft);
+  max-width: 46ch;
+}
+
+/*
+ * A determinate progress mark, not a spinner — because every slow thing in this app has a known
+ * cause worth naming ("reading the page at Amazon.in"), and a bare spinning circle says only "wait".
+ * The bar is indeterminate in extent but the label carries the meaning.
+ */
+.working {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-3);
+  font-size: var(--t-small);
+  color: var(--ink-soft);
+}
+
+.working-bar {
+  position: relative;
+  width: 2.5rem;
+  height: 3px;
+  background: var(--rule);
+  overflow: hidden;
+}
+
+@keyframes working-sweep {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(250%);
+  }
+}
+
+.working-bar::after {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 40%;
+  background: var(--ink);
+  animation: working-sweep 900ms linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .working-bar::after {
+    animation: none;
+    width: 100%;
+    opacity: 0.4;
+  }
+}
+
+.skeleton {
+  background: linear-gradient(90deg, #e6eaf0, #f1f4f8, #e6eaf0);
+  background-size: 200% 100%;
+  height: 1rem;
+}
+
+/* ═══════════════════════════════════════════════════════════ admin */
+
+.admin-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: var(--s-5);
+}
+
+.admin-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-3);
+  align-items: center;
+}
+
+.admin-id-input {
+  width: 7rem;
+}

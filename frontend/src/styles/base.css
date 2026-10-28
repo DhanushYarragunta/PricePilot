@@ -1,0 +1,375 @@
+/*
+ * Base layer: the reset, the element defaults, and the primitives every page shares.
+ *
+ * Only element selectors and a handful of utility classes live here. Anything that belongs to one
+ * screen lives in app.css, so this file stays readable as "what a bare HTML element looks like in
+ * PricePilot" — which is the question you actually want answered when something looks wrong.
+ */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--face-text);
+  font-size: var(--t-body);
+  line-height: 1.55;
+  /*
+   * Tabular figures, globally. This is the single most useful typographic decision in the whole
+   * interface: with proportional digits a column of prices wanders, because 1 is narrower than 8,
+   * and comparing ₹1,29,900 against ₹1,11,900 stops being a glance and becomes an act of reading.
+   * Archivo's tnum feature fixes every digit to the same advance width, so prices stack into real
+   * columns and a changing price does not shift the characters beside it.
+   */
+  font-variant-numeric: tabular-nums;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2,
+h3,
+h4,
+p,
+figure,
+blockquote,
+dl,
+dd {
+  margin: 0;
+}
+
+h1,
+h2,
+h3 {
+  font-family: var(--face-display);
+  font-weight: 700;
+  line-height: 1.1;
+  /* Display sizes need negative tracking; at 42px the default spacing reads as loose. */
+  letter-spacing: -0.02em;
+  text-wrap: balance;
+}
+
+h1 {
+  font-size: var(--t-h1);
+}
+
+h2 {
+  font-size: var(--t-h2);
+}
+
+h3 {
+  font-size: var(--t-h3);
+  letter-spacing: -0.01em;
+}
+
+p {
+  max-width: var(--measure);
+}
+
+ul,
+ol {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+a {
+  color: inherit;
+  text-decoration-color: var(--rule-strong);
+  text-underline-offset: 3px;
+}
+
+a:hover {
+  text-decoration-color: currentColor;
+}
+
+img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  font-variant-numeric: inherit;
+  color: inherit;
+}
+
+/*
+ * One focus style for the entire application, drawn as an offset outline so it is visible on a
+ * white panel, on the navy header, and on a coloured badge without three variants. :focus-visible
+ * rather than :focus so a mouse click on a button does not leave a ring behind — the ring is for
+ * people navigating by keyboard, and showing it to everyone is what gets it removed by someone
+ * later.
+ */
+:focus-visible {
+  outline: var(--focus);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+/* ─────────────────────────────────────────────────────────── layout primitives */
+
+.page {
+  width: 100%;
+  max-width: var(--page);
+  margin: 0 auto;
+  padding: 0 var(--s-5);
+}
+
+.stack > * + * {
+  margin-top: var(--s-4);
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+}
+
+.row-between {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-4);
+}
+
+.spread {
+  flex: 1 1 auto;
+}
+
+/* ─────────────────────────────────────────────────────────── text primitives */
+
+.lead {
+  font-size: var(--t-lead);
+  line-height: 1.5;
+  color: var(--ink-soft);
+}
+
+.muted {
+  color: var(--ink-soft);
+}
+
+.faint {
+  color: var(--ink-faint);
+}
+
+.small {
+  font-size: var(--t-small);
+}
+
+.micro {
+  font-size: var(--t-micro);
+  color: var(--ink-faint);
+}
+
+/*
+ * Machine strings — extraction strategy keys, HTTP statuses, hostnames.
+ *
+ * A monospace face is the usual move here and is one of the tells worth avoiding; it also drags a
+ * fourth typeface into a two-typeface design for the sake of eleven-pixel labels. Archivo at a
+ * small size with slight positive tracking and a lighter ink reads as "this string came from the
+ * system" just as clearly, and sits in the same vertical rhythm as everything around it.
+ */
+.machine {
+  font-size: var(--t-micro);
+  letter-spacing: 0.04em;
+  color: var(--ink-soft);
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ─────────────────────────────────────────────────────────── controls */
+
+/*
+ * Buttons are pills; everything structural is square. See the radius note in tokens.css — shape
+ * is the affordance signal, so this is the only family of things in the app that is round.
+ */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--s-2);
+  padding: 0.5rem 1.05rem;
+  border: 1px solid var(--ink);
+  border-radius: var(--r-control);
+  background: var(--ink);
+  color: var(--ink-inverse);
+  font-size: var(--t-small);
+  font-weight: 600;
+  cursor: pointer;
+  transition: background var(--motion-fast) ease, color var(--motion-fast) ease,
+    border-color var(--motion-fast) ease;
+}
+
+.btn:hover:not(:disabled) {
+  background: #0d1930;
+}
+
+.btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.btn-ghost {
+  background: transparent;
+  color: var(--ink);
+  border-color: var(--rule-strong);
+}
+
+.btn-ghost:hover:not(:disabled) {
+  background: var(--panel);
+  border-color: var(--ink);
+}
+
+.btn-quiet {
+  padding: 0.3rem 0.7rem;
+  background: transparent;
+  border-color: transparent;
+  color: var(--ink-soft);
+  font-weight: 500;
+}
+
+.btn-quiet:hover:not(:disabled) {
+  background: var(--panel-sunk);
+  border-color: var(--rule);
+  color: var(--ink);
+}
+
+.btn-danger {
+  background: transparent;
+  border-color: var(--rise);
+  color: var(--rise);
+}
+
+.btn-danger:hover:not(:disabled) {
+  background: var(--rise-wash);
+}
+
+.btn-sm {
+  padding: 0.3rem 0.8rem;
+  font-size: var(--t-micro);
+}
+
+/* ─────────────────────────────────────────────────────────── fields */
+
+.field {
+  display: block;
+}
+
+.field-label {
+  display: block;
+  margin-bottom: var(--s-2);
+  font-size: var(--t-small);
+  font-weight: 600;
+}
+
+.field-hint {
+  margin-top: var(--s-2);
+  font-size: var(--t-small);
+  color: var(--ink-soft);
+}
+
+.field-error {
+  margin-top: var(--s-2);
+  font-size: var(--t-small);
+  color: var(--rise);
+}
+
+.input,
+.textarea {
+  width: 100%;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--r-field);
+  background: var(--panel);
+  transition: border-color var(--motion-fast) ease;
+}
+
+.input:hover,
+.textarea:hover {
+  border-color: var(--ink-faint);
+}
+
+.input:focus,
+.textarea:focus {
+  outline: none;
+  border-color: var(--ink);
+  box-shadow: inset 0 0 0 1px var(--ink);
+}
+
+.input[aria-invalid='true'] {
+  border-color: var(--rise);
+}
+
+.textarea {
+  min-height: 4.5rem;
+  resize: vertical;
+}
+
+.checkbox {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s-3);
+  cursor: pointer;
+}
+
+.checkbox input {
+  margin: 0.25rem 0 0;
+  width: 1rem;
+  height: 1rem;
+  accent-color: var(--ink);
+  flex: none;
+}
+
+/* ─────────────────────────────────────────────────────────── panels */
+
+.panel {
+  background: var(--panel);
+  border: var(--line);
+}
+
+.panel-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s-4);
+  padding: var(--s-4) var(--s-5);
+  border-bottom: var(--line);
+}
+
+.panel-title {
+  font-family: var(--face-display);
+  font-size: var(--t-lead);
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.panel-body {
+  padding: var(--s-5);
+}
+
+.panel-body-flush {
+  padding: 0;
+}

@@ -1,0 +1,177 @@
+# ════════════════════════════════════════════════════════════════════════════
+#  PricePilot site configuration
+#
+#  ${DOMAIN} is substituted at container start by the official nginx image's
+#  envsubst step, from the value in .env. nginx's own variables ($host,
+#  $request_uri, ...) are written without braces and are left alone by it.
+#
+#  Two servers: port 80 exists to answer ACME challenges and redirect everything
+#  else, port 443 is the real one.
+# ════════════════════════════════════════════════════════════════════════════
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name ${DOMAIN};
+
+    # ── The ACME challenge, before the redirect ──
+    #
+    # Order matters here and it is the single most common reason certbot renewals
+    # fail: Let's Encrypt fetches this path over plain HTTP, and a blanket
+    # redirect to HTTPS would bounce that request to a certificate that has
+    # expired — which is the situation the renewal is trying to fix. This
+    # location is matched first, so the challenge is always served.
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+        # Nothing else should ever be read from this directory.
+        autoindex off;
+    }
+
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    http2 on;
+    server_name ${DOMAIN};
+
+    # ── TLS ──
+    #
+    # These paths are a shared volume written by the certbot container. They must
+    # exist before nginx starts, which is what deploy/init-letsencrypt.sh is for:
+    # it writes a self-signed placeholder so nginx can come up, then replaces it
+    # with the real certificate. Without that step the first start fails and the
+    # cause ("cannot load certificate") reads like a configuration error rather
+    # than a sequencing one.
+    ssl_certificate     /etc/letsencrypt/live/${DOMAIN}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${DOMAIN}/privkey.pem;
+
+    # TLS 1.2 and 1.3 only. 1.0 and 1.1 are deprecated and nothing that can run
+    # this React build is restricted to them.
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers off;
+    ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305;
+    ssl_session_cache shared:SSL:5m;
+    ssl_session_timeout 1h;
+    ssl_session_tickets off;
+
+    # ── Security headers ──
+    #
+    # Written out rather than copied from a generator, because two of them are
+    # decisions about this application specifically.
+    #
+    # The CSP has no 'unsafe-inline' for script-src, which it can afford because
+    # Vite emits external bundles and this app renders no user-supplied HTML
+    # anywhere — React escapes text by default and dangerouslySetInnerHTML does
+    # not appear in the codebase. style-src does allow 'unsafe-inline': the
+    # application sets a handful of inline styles for computed values, such as a
+    # bar's width as a percentage, and those cannot be in a stylesheet.
+    #
+    # img-src allows any https origin, which is deliberate and is the one place
+    # this policy is loose: product images are hotlinked from retailer CDNs, and
+    # the alternative is proxying every thumbnail through this box.
+    add_header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data: https:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-Frame-Options "DENY" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+    # HSTS, one year, with preload left off. Preload is a one-way door — getting
+    # a domain removed from the browser list takes months — and is not worth it
+    # for a project that may change hosting.
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+
+    limit_conn conn 24;
+
+    # ── The API ──
+    location /api/ {
+        limit_req zone=api burst=20 nodelay;
+
+        # `app` is the service name in docker-compose.yml, resolved by Docker's
+        # embedded DNS. The resolver line is not needed because the upstream is
+        # a literal name resolved at each request by nginx's own lookup.
+        proxy_pass http://app:8080;
+
+        proxy_http_version 1.1;
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        # Both of these are read by Spring's forward-headers-strategy, which is
+        # set to `framework` in application.yml. Without them, any absolute URL
+        # the backend generates comes out as http://app:8080/... — a hostname
+        # that only exists inside the Docker network.
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Host  $host;
+        proxy_set_header X-Forwarded-Port  $server_port;
+
+        # ── Timeouts ──
+        #
+        # 90 seconds, which is much longer than a normal API call and is sized
+        # for exactly one endpoint: POST /api/products fetches the retailer's
+        # page before it answers, and a slow retailer plus a retry can genuinely
+        # take half a minute. The default 60s would turn that into a 504 while
+        # the fetch was still in progress — and the user would see a failure for
+        # a product that then appears in their list anyway, which is the worst
+        # of both outcomes.
+        proxy_connect_timeout 10s;
+        proxy_send_timeout    90s;
+        proxy_read_timeout    90s;
+
+        # Buffering off for proxied JSON. The responses are small and this
+        # removes a copy; more usefully, it means a slow endpoint starts
+        # returning as soon as Spring starts writing rather than after nginx has
+        # collected the whole body.
+        proxy_buffering off;
+
+        # An API response is never a cacheable asset, and saying so explicitly
+        # stops any intermediate proxy between the user and this box from
+        # deciding otherwise and serving a stale price.
+        add_header Cache-Control "no-store" always;
+    }
+
+    # ── Health, for uptime monitoring ──
+    #
+    # Exposed because a free uptime monitor needs something to poll, and polling
+    # the dashboard would both fail without a token and wake the React bundle.
+    # Spring's management endpoints are limited to health and info in
+    # application.yml, so nothing sensitive is reachable through this.
+    location /actuator/health {
+        proxy_pass http://app:8080/actuator/health;
+        proxy_set_header Host $host;
+        access_log off;
+    }
+
+    # ── Static assets ──
+    #
+    # Vite fingerprints every file it emits (app-4f8a1c.js), so the content at a
+    # given URL can never change. That makes a one-year immutable cache correct
+    # rather than optimistic, and it is what makes a repeat visit instant.
+    location /assets/ {
+        root /usr/share/nginx/html;
+        expires 1y;
+        add_header Cache-Control "public, immutable" always;
+        access_log off;
+    }
+
+    # ── The application ──
+    location / {
+        root /usr/share/nginx/html;
+
+        # The SPA fallback. React Router owns the URL space, so a visitor opening
+        # /products/42 directly — from a bookmark or a shared link — must be
+        # served index.html rather than a 404, and the router then reads the path.
+        # This is the line whose absence makes "it works until you refresh".
+        try_files $uri $uri/ /index.html;
+
+        # index.html itself must never be cached, however long the assets are.
+        # It is the file that names which fingerprinted bundle to load, so a
+        # cached copy after a deploy points the browser at files that no longer
+        # exist — a blank page that a refresh does not fix.
+        location = /index.html {
+            root /usr/share/nginx/html;
+            expires -1;
+            add_header Cache-Control "no-store, must-revalidate" always;
+        }
+    }
+}

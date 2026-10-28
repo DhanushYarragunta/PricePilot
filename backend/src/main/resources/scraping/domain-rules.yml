@@ -1,0 +1,514 @@
+# =====================================================================
+#  PricePilot — per-domain extraction rules
+# =====================================================================
+#
+#  WHY THIS FILE EXISTS
+#  --------------------
+#  Retailers change their HTML. A CSS class that works today is gone in
+#  three months. If those selectors lived in Java, every change would
+#  mean a rebuild, a redeploy and downtime.
+#
+#  They live here instead. On the server this file is mounted from disk
+#  (see SCRAPE_RULES_PATH in .env), so fixing a broken retailer is:
+#
+#      1. edit this file
+#      2. POST /api/ops/rules/reload   (admin only)
+#      3. done — no restart, no rebuild
+#
+#  HOW TO FIX A BROKEN RETAILER
+#  ----------------------------
+#  The /ops page shows success rate per host and per strategy. When a
+#  host drops toward 0%:
+#
+#      * open the product page in Chrome
+#      * Ctrl+U to view SOURCE (not Inspect — Inspect shows the DOM
+#        after JavaScript ran, and we only ever see the source)
+#      * Ctrl+F for the price digits
+#      * if you find it inside <script type="application/ld+json">,
+#        nothing needs fixing — the json-ld strategy handles it
+#      * if you find it in a <script> as "someKey":12345, add that key
+#        to json-keys
+#      * only if neither works, add a CSS selector
+#
+#  STRATEGY ORDER MATTERS
+#  ----------------------
+#  Strategies run in the order listed and the first one that yields a
+#  price wins. Structured data (json-ld, microdata, meta) is tried
+#  before CSS because it is what the retailer publishes *deliberately*
+#  for Google Shopping — it survives redesigns that break CSS.
+#
+#  SELECTOR SYNTAX
+#  ---------------
+#  Plain CSS selector          ->  element text is used
+#  Selector with @attribute    ->  that attribute is used
+#
+#      '#productTitle'                         text of #productTitle
+#      'meta[property="og:image"]@content'     the content attribute
+#
+#  Always quote selectors. A bare value starting with # is a YAML
+#  comment, and [ ] would be parsed as a list.
+#
+#  Regexes must use 'single quotes' so YAML leaves the backslashes
+#  alone.
+#
+# =====================================================================
+
+version: 1
+
+# ---------------------------------------------------------------------
+# defaults — merged into every host. A host may override any key;
+# lists in a host are tried BEFORE the defaults, not instead of them.
+# ---------------------------------------------------------------------
+defaults:
+  currency: INR
+
+  strategies:
+    - json-ld        # <script type="application/ld+json"> schema.org/Product
+    - microdata      # itemprop="price" attributes
+    - meta           # og:price:amount / product:price:amount
+    - embedded-json  # price hidden in an inline <script> blob
+    - css            # last resort: per-host CSS selectors
+
+  # Politeness floor, per host. Raising the delay is always safe;
+  # lowering it is how IPs get banned.
+  min-delay-ms: 4000
+
+  # Text that means "we were served an anti-bot page, not a product
+  # page". Matched case-insensitively against the whole document.
+  # A match is recorded as BLOCKED, never as NO_PRICE, so the metrics
+  # tell the truth about *why* a fetch failed.
+  block-markers:
+    - "enter the characters you see below"
+    - "api-services-support@amazon.com"
+    - "to discuss automated access"
+    - "type the characters you see in this image"
+    - "robot check"
+    - "are you a human"
+    - "verify you are a human"
+    - "unusual traffic from your computer"
+    - "checking if the site connection is secure"
+    - "cf-browser-verification"
+    - "just a moment..."
+    - "ddos protection by cloudflare"
+    - "access denied"
+    - "request unsuccessful. incapsula"
+    - "pardon our interruption"
+    - "px-captcha"
+    - "perimeterx"
+
+  # Phrases that mean the product exists but cannot be bought.
+  # Checked only inside the buy-box region when one is configured,
+  # otherwise against the whole page.
+  out-of-stock-text:
+    - "currently unavailable"
+    - "out of stock"
+    - "sold out"
+    - "temporarily unavailable"
+    - "notify me when available"
+    - "coming soon"
+
+  # Tracking junk. Stripped before hashing the URL, so the same product
+  # arriving with different campaign tags is recognised as one listing
+  # and fetched once for every user watching it.
+  strip-query-params:
+    - "ref"
+    - "ref_"
+    - "tag"
+    - "th"
+    - "psc"
+    - "linkCode"
+    - "creativeASIN"
+    - "ascsubtag"
+    - "lid"
+    - "marketplace"
+    - "store"
+    - "srno"
+    - "otracker"
+    - "otracker1"
+    - "fm"
+    - "iid"
+    - "ppt"
+    - "ppn"
+    - "ssid"
+    - "qH"
+    - "spid"
+    - "utm_source"
+    - "utm_medium"
+    - "utm_campaign"
+    - "utm_term"
+    - "utm_content"
+    - "gclid"
+    - "fbclid"
+    - "_refId"
+    - "cid"
+
+  # Structured-data fallbacks that work on a surprising number of
+  # Indian storefronts because most run Shopify, Magento or Hybris.
+  price:
+    - 'meta[property="product:price:amount"]@content'
+    - 'meta[property="og:price:amount"]@content'
+    - 'meta[itemprop="price"]@content'
+    - '[itemprop="price"]@content'
+    - '[itemprop="lowPrice"]@content'
+
+  mrp:
+    - '[itemprop="highPrice"]@content'
+
+  title:
+    - 'meta[property="og:title"]@content'
+    - 'meta[name="title"]@content'
+    - "h1"
+
+  image:
+    - 'meta[property="og:image"]@content'
+    - 'meta[name="twitter:image"]@content'
+    - 'link[rel="image_src"]@href'
+
+# ---------------------------------------------------------------------
+# hosts — matched by domain suffix, longest match wins.
+# "amazon.in" therefore also matches "www.amazon.in".
+# ---------------------------------------------------------------------
+hosts:
+
+  # -------------------------------------------------------------------
+  # Amazon.in — the hardest target by a wide margin.
+  #
+  # Amazon serves a CAPTCHA page to datacentre IPs fairly often. When
+  # that happens the fetch is recorded as BLOCKED and, if an unblocker
+  # provider is configured and inside budget, retried through it.
+  #
+  # If direct fetches stop working entirely, set unblocker-first: true
+  # below. That spends provider credits on every check, so leave it
+  # false until the /ops page says you have to.
+  #
+  # The selector that matters most is span.a-offscreen: Amazon puts the
+  # complete, screen-reader-friendly price there ("₹1,29,999.00") while
+  # the visible markup splits rupees and paise across elements.
+  # -------------------------------------------------------------------
+  amazon.in:
+    retailer: "Amazon.in"
+    min-delay-ms: 9000
+    unblocker-first: false
+    # Amazon's JSON-LD is absent on most PDPs, so CSS is promoted above
+    # it here. embedded-json catches the newer React-rendered layout.
+    strategies:
+      - css
+      - embedded-json
+      - json-ld
+      - microdata
+      - meta
+    canonical-regex: '/(?:dp|gp/product)/([A-Z0-9]{10})'
+    canonical-format: "https://www.amazon.in/dp/%s"
+    price:
+      - "#corePriceDisplay_desktop_feature_div span.priceToPay span.a-offscreen"
+      - "#corePriceDisplay_desktop_feature_div span.a-price span.a-offscreen"
+      - "#corePrice_feature_div span.a-price span.a-offscreen"
+      - "#corePrice_desktop span.a-price span.a-offscreen"
+      - "#apex_desktop span.a-price span.a-offscreen"
+      - "span.a-price.priceToPay span.a-offscreen"
+      - "#price_inside_buybox"
+      - "#newBuyBoxPrice"
+      - "#priceblock_ourprice"
+      - "#priceblock_dealprice"
+      - "#priceblock_saleprice"
+      - "#tp_price_block_total_price_ours span.a-offscreen"
+    mrp:
+      - "#corePriceDisplay_desktop_feature_div span.a-price.a-text-price span.a-offscreen"
+      - "span.basisPrice span.a-offscreen"
+      - "#listPrice"
+      - "#priceblock_listprice"
+    title:
+      - "#productTitle"
+      - "#title span"
+      - 'meta[name="title"]@content'
+    image:
+      - "#landingImage@src"
+      - "#imgBlkFront@src"
+      - "#main-image@src"
+      - 'meta[property="og:image"]@content'
+    out-of-stock-selectors:
+      - "#outOfStock"
+      - "#availability span.a-color-price"
+    availability-selectors:
+      - "#availability"
+      - "#buybox"
+    # "priceAmount" is what Amazon's own front-end JavaScript reads.
+    json-keys:
+      - "priceAmount"
+      - "displayPrice"
+    block-markers:
+      - "sorry, we just need to make sure you're not a robot"
+      - "click the button below to continue shopping"
+
+  # -------------------------------------------------------------------
+  # Flipkart — obfuscated, rotating CSS class names (._30jeq3, .Nx9bqj)
+  # that change every few months, so CSS is deliberately LAST here.
+  #
+  # Flipkart does publish schema.org JSON-LD for Google Shopping, and
+  # its React state is embedded in the page. Both outlive the classes.
+  # -------------------------------------------------------------------
+  flipkart.com:
+    retailer: "Flipkart"
+    min-delay-ms: 6000
+    strategies:
+      - json-ld
+      - embedded-json
+      - meta
+      - microdata
+      - css
+    # Flipkart identifies a listing by pid; everything else in the query
+    # string is session and tracking noise.
+    keep-query-params:
+      - "pid"
+    price:
+      # Class names as of the last time they were checked. Expect these
+      # to rot — that is exactly why they are last.
+      - "div.Nx9bqj.CxhGGd"
+      - "div._30jeq3._16Jk6d"
+      - "div._30jeq3"
+      - "div.CEmiEU div.Nx9bqj"
+    mrp:
+      - "div.yRaY8j"
+      - "div._3I9_wc._2p6lqe"
+      - "div._3I9_wc"
+    title:
+      - "span.VU-ZEz"
+      - "span.B_NuCI"
+      - "h1 span"
+      - 'meta[property="og:title"]@content'
+    image:
+      - "img._396cs4@src"
+      - "img.DByuf4@src"
+      - 'meta[property="og:image"]@content'
+    # Flipkart's state stores money as paise-free integers inside nested
+    # objects, so a plain key lookup is not enough — these patterns pull
+    # the number out of the surrounding JSON.
+    json-patterns:
+      - '"finalPrice"\s*:\s*\{[^{}]*?"value"\s*:\s*([0-9]+(?:\.[0-9]+)?)'
+      - '"sellingPrice"\s*:\s*\{[^{}]*?"value"\s*:\s*([0-9]+(?:\.[0-9]+)?)'
+      - '"price"\s*:\s*\{[^{}]*?"value"\s*:\s*([0-9]+(?:\.[0-9]+)?)'
+    mrp-patterns:
+      - '"mrp"\s*:\s*\{[^{}]*?"value"\s*:\s*([0-9]+(?:\.[0-9]+)?)'
+      - '"strikeOffPrice"\s*:\s*\{[^{}]*?"value"\s*:\s*([0-9]+(?:\.[0-9]+)?)'
+    state-vars:
+      - "__INITIAL_STATE__"
+      - "__PRELOADED_STATE__"
+    out-of-stock-text:
+      - "sold out"
+      - "currently out of stock"
+      - "this item is currently out of stock"
+
+  # -------------------------------------------------------------------
+  # Croma — SAP Hybris storefront. Publishes clean JSON-LD, so this one
+  # is close to free. Keep it in the demo set.
+  # -------------------------------------------------------------------
+  croma.com:
+    retailer: "Croma"
+    min-delay-ms: 4000
+    canonical-regex: '(/[^?#]*/p/\d+)'
+    price:
+      - "#pdp-product-price span.amount"
+      - "span.amount"
+      - "div.pdp-price span"
+      - 'meta[itemprop="price"]@content'
+    mrp:
+      - "span.old-price"
+      - "div.pdp-price del"
+      - "del"
+    title:
+      - "h1.pd-title"
+      - "h1.pdp-title"
+      - 'meta[property="og:title"]@content'
+    out-of-stock-text:
+      - "out of stock"
+      - "sold out"
+      - "notify me"
+
+  # -------------------------------------------------------------------
+  # Reliance Digital — styled-components, so class names are generated
+  # hashes. Structured data first, CSS as a courtesy.
+  # -------------------------------------------------------------------
+  reliancedigital.in:
+    retailer: "Reliance Digital"
+    min-delay-ms: 4000
+    canonical-regex: '(/[^?#]*/p/\d+)'
+    price:
+      - "span.pdp__offerPrice"
+      - "#pdp_price"
+      - "div.pdp__priceSection span"
+      - 'meta[itemprop="price"]@content'
+    mrp:
+      - "span.pdp__mrpPrice"
+      - "div.pdp__mrp"
+    title:
+      - "h1.pdp__title"
+      - 'meta[property="og:title"]@content'
+
+  # -------------------------------------------------------------------
+  # Vijay Sales — Magento. Magento's price block is well-known and
+  # stable, which makes this host one of the reliable ones.
+  # -------------------------------------------------------------------
+  vijaysales.com:
+    retailer: "Vijay Sales"
+    min-delay-ms: 4000
+    price:
+      - 'span[data-price-type="finalPrice"] span.price'
+      - "div.price-box span.price"
+      - "span.special-price span.price"
+      - 'meta[itemprop="price"]@content'
+    mrp:
+      - 'span[data-price-type="oldPrice"] span.price'
+      - "span.old-price span.price"
+    title:
+      - "h1.page-title span"
+      - 'meta[property="og:title"]@content'
+
+  # -------------------------------------------------------------------
+  # Tata CLiQ — Hybris, good JSON-LD coverage.
+  # -------------------------------------------------------------------
+  tatacliq.com:
+    retailer: "Tata CLiQ"
+    min-delay-ms: 4000
+    price:
+      - "div.ProductDescriptionPage__price"
+      - "span.PdpPriceSection__price"
+      - 'meta[itemprop="price"]@content'
+    mrp:
+      - "span.PdpPriceSection__striked"
+      - "div.ProductDescriptionPage__mrp"
+    title:
+      - "h1.ProductDescriptionPage__title"
+      - 'meta[property="og:title"]@content'
+
+  # -------------------------------------------------------------------
+  # JioMart
+  # -------------------------------------------------------------------
+  jiomart.com:
+    retailer: "JioMart"
+    min-delay-ms: 4000
+    price:
+      - "span#final_price"
+      - "div.final-price"
+      - 'meta[itemprop="price"]@content'
+    mrp:
+      - "span.line-through"
+      - "div.mrp-price"
+    title:
+      - "div.product-name h1"
+      - 'meta[property="og:title"]@content'
+
+  # -------------------------------------------------------------------
+  # Snapdeal — plain server-rendered HTML, the easiest host here.
+  # -------------------------------------------------------------------
+  snapdeal.com:
+    retailer: "Snapdeal"
+    min-delay-ms: 4000
+    price:
+      - "span.payBualsoBkText"
+      - "span.pdp-final-price span"
+      - "#buyPriceBox span.payBualsoBkText"
+      - 'meta[itemprop="price"]@content'
+    mrp:
+      - "span.pdpCutPrice"
+      - "span.pdp-cut-price"
+    title:
+      - "h1.pdp-e-i-head"
+      - 'meta[property="og:title"]@content'
+
+  # -------------------------------------------------------------------
+  # Myntra — the price lives in an inline script (pdpData), not in the
+  # server-rendered markup, so embedded-json runs early.
+  # -------------------------------------------------------------------
+  myntra.com:
+    retailer: "Myntra"
+    min-delay-ms: 5000
+    strategies:
+      - embedded-json
+      - json-ld
+      - meta
+      - microdata
+      - css
+    json-patterns:
+      - '"discountedPrice"\s*:\s*([0-9]+(?:\.[0-9]+)?)'
+      - '"sellingPrice"\s*:\s*([0-9]+(?:\.[0-9]+)?)'
+    mrp-patterns:
+      - '"mrp"\s*:\s*([0-9]+(?:\.[0-9]+)?)'
+    state-vars:
+      - "__myx"
+      - "__INITIAL_STATE__"
+    price:
+      - "span.pdp-price strong"
+      - "div.pdp-price"
+    mrp:
+      - "span.pdp-mrp s"
+    title:
+      - "h1.pdp-title"
+      - 'meta[property="og:title"]@content'
+
+  # -------------------------------------------------------------------
+  # AJIO
+  # -------------------------------------------------------------------
+  ajio.com:
+    retailer: "AJIO"
+    min-delay-ms: 5000
+    price:
+      - "div.prod-sp"
+      - "span.prod-sp"
+      - 'meta[itemprop="price"]@content'
+    mrp:
+      - "span.prod-cp"
+    title:
+      - "h1.prod-name"
+      - 'meta[property="og:title"]@content'
+
+  # -------------------------------------------------------------------
+  # Nykaa
+  # -------------------------------------------------------------------
+  nykaa.com:
+    retailer: "Nykaa"
+    min-delay-ms: 5000
+    json-patterns:
+      - '"finalPrice"\s*:\s*([0-9]+(?:\.[0-9]+)?)'
+      - '"offerPrice"\s*:\s*([0-9]+(?:\.[0-9]+)?)'
+    mrp-patterns:
+      - '"mrp"\s*:\s*([0-9]+(?:\.[0-9]+)?)'
+    state-vars:
+      - "__PRELOADED_STATE__"
+    price:
+      - "span.css-1jczs19"
+      - "div.css-1d0pxc0 span"
+    title:
+      - "h1"
+      - 'meta[property="og:title"]@content'
+
+  # -------------------------------------------------------------------
+  # Sangeetha Mobiles — Shopify-style, reliable structured data.
+  # -------------------------------------------------------------------
+  sangeethamobiles.com:
+    retailer: "Sangeetha Mobiles"
+    min-delay-ms: 4000
+    price:
+      - "span.product-price"
+      - "div.price-box span.price"
+    mrp:
+      - "span.product-mrp"
+      - "del"
+    title:
+      - "h1.product-title"
+      - 'meta[property="og:title"]@content'
+
+  # -------------------------------------------------------------------
+  # Poorvika
+  # -------------------------------------------------------------------
+  poorvika.com:
+    retailer: "Poorvika"
+    min-delay-ms: 4000
+    price:
+      - "span.price-value"
+      - "div.product-price span"
+    mrp:
+      - "span.mrp-value"
+      - "del"
+    title:
+      - "h1.product-name"
+      - 'meta[property="og:title"]@content'

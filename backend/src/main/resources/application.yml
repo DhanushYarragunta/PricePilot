@@ -1,0 +1,262 @@
+# ============================================================================
+# PricePilot backend configuration
+# Every value can be overridden by an environment variable, so the same image
+# runs locally and on EC2 with no rebuild. Defaults here are dev-friendly.
+# ============================================================================
+server:
+  port: ${SERVER_PORT:8080}
+  compression:
+    enabled: true
+    mime-types: application/json,text/html,text/css,application/javascript
+  error:
+    include-message: always
+    include-binding-errors: always
+  # Behind nginx we need the real client IP / scheme for correct redirects.
+  forward-headers-strategy: framework
+  shutdown: graceful
+
+spring:
+  application:
+    name: pricepilot
+
+  lifecycle:
+    timeout-per-shutdown-phase: 25s
+
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/pricepilot}
+    username: ${POSTGRES_USER:pricepilot}
+    password: ${POSTGRES_PASSWORD:pricepilot}
+    hikari:
+      # t3.small has limited memory; a small pool is plenty for this workload.
+      maximum-pool-size: ${DB_POOL_MAX:8}
+      minimum-idle: 2
+      connection-timeout: 20000
+      max-lifetime: 1200000
+      pool-name: pricepilot-pool
+
+  jpa:
+    open-in-view: false
+    hibernate:
+      # Flyway owns the schema. `validate` makes a mismatch fail loudly at
+      # startup instead of silently corrupting data later.
+      ddl-auto: validate
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: UTC
+          batch_size: 50
+        order_inserts: true
+        order_updates: true
+    show-sql: false
+
+  flyway:
+    enabled: true
+    baseline-on-migrate: true
+    locations: classpath:db/migration
+
+  cache:
+    type: caffeine
+
+  task:
+    execution:
+      pool:
+        # Backs every @Async method, which here means alert email delivery. Bounded
+        # deliberately: the default queue is effectively unlimited, so a mail server
+        # that accepts connections but never answers would let undelivered messages
+        # pile up in heap until the JVM died. With a bounded queue the send is
+        # rejected instead, and the alert stays in the app's feed either way.
+        core-size: 2
+        max-size: 4
+        queue-capacity: 100
+      thread-name-prefix: pricepilot-async-
+      shutdown:
+        await-termination: true
+        await-termination-period: 15s
+    scheduling:
+      pool:
+        # Two: one for the scrape dispatcher tick, one so the nightly telemetry
+        # prune cannot be delayed by a tick that is running long.
+        size: 2
+      thread-name-prefix: pricepilot-sched-
+
+  mail:
+    host: ${MAIL_HOST:smtp.gmail.com}
+    port: ${MAIL_PORT:587}
+    username: ${MAIL_USERNAME:}
+    password: ${MAIL_PASSWORD:}
+    properties:
+      mail:
+        smtp:
+          auth: true
+          starttls:
+            enable: true
+          connectiontimeout: 10000
+          timeout: 10000
+          writetimeout: 10000
+
+  jackson:
+    default-property-inclusion: non_null
+    serialization:
+      write-dates-as-timestamps: false
+      fail-on-empty-beans: false
+    deserialization:
+      fail-on-unknown-properties: false
+
+  threads:
+    virtual:
+      enabled: false
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: never
+      probes:
+        enabled: true
+  health:
+    mail:
+      # Do not let an unconfigured SMTP server mark the whole app unhealthy.
+      enabled: false
+
+# ============================================================================
+# Application-specific settings
+# ============================================================================
+pricepilot:
+
+  auth:
+    jwt-secret: ${JWT_SECRET:dev-only-secret-change-me-this-must-be-32-bytes-or-more}
+    jwt-ttl-hours: ${JWT_TTL_HOURS:72}
+    signup-invite-code: ${SIGNUP_INVITE_CODE:}
+
+  cors:
+    allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:5173,http://localhost:3000}
+
+  public-url: ${APP_PUBLIC_URL:http://localhost:5173}
+
+  # --------------------------------------------------------------------------
+  # Claude — the only LLM provider.
+  # --------------------------------------------------------------------------
+  ai:
+    api-key: ${ANTHROPIC_API_KEY:}
+    model: ${ANTHROPIC_MODEL:claude-haiku-4-5}
+    base-url: ${ANTHROPIC_BASE_URL:https://api.anthropic.com}
+    api-version: "2023-06-01"
+    max-tokens: 1200
+    timeout-ms: 45000
+    monthly-budget-usd: ${AI_MONTHLY_BUDGET_USD:5.00}
+    # Re-analysis is skipped if a fresh verdict exists and the price has not
+    # moved by more than this fraction. Keeps spend proportional to signal.
+    reanalysis-price-delta: 0.02
+    reanalysis-min-age-hours: 12
+
+  # --------------------------------------------------------------------------
+  # Tavily — discovery only. Never a price source.
+  # --------------------------------------------------------------------------
+  discovery:
+    api-key: ${TAVILY_API_KEY:}
+    base-url: https://api.tavily.com
+    timeout-ms: 20000
+    monthly-call-budget: ${TAVILY_MONTHLY_CALL_BUDGET:500}
+    max-results: 8
+
+  # --------------------------------------------------------------------------
+  # Scraping engine
+  # --------------------------------------------------------------------------
+  scrape:
+    timeout-ms: ${SCRAPE_TIMEOUT_MS:20000}
+    max-concurrency: ${SCRAPE_MAX_CONCURRENCY:2}
+    # Minimum gap between two requests to the SAME host.
+    min-delay-ms: ${SCRAPE_MIN_DELAY_MS:4000}
+    max-retries: 2
+    max-response-bytes: 4194304
+    # A freshly scraped price younger than this is reused instead of refetched.
+    # This is what makes several users watching one product cost one fetch.
+    freshness-window-seconds: ${SCRAPE_FRESHNESS_SECONDS:900}
+    # Unblocker fallback
+    provider: ${SCRAPER_PROVIDER:none}
+    provider-api-key: ${SCRAPER_API_KEY:}
+    provider-monthly-call-budget: ${SCRAPER_MONTHLY_CALL_BUDGET:800}
+    provider-country: in
+    # Overridable so a deployment can point this at a file on disk — e.g.
+    # file:/opt/pricepilot/config/domain-rules.yml — instead of the copy baked into
+    # the jar. That is what makes POST /api/admin/rules/reload worth having: when a
+    # retailer changes its markup, the fix is to edit that file over SSH and reload,
+    # with no rebuild and no restart. Left at the classpath default, the reload
+    # endpoint can only ever re-read a file that cannot change.
+    rules-path: ${SCRAPE_RULES_PATH:classpath:scraping/domain-rules.yml}
+
+  # --------------------------------------------------------------------------
+  # Adaptive scheduler. Instead of polling everything hourly, each listing
+  # earns its own interval based on how much its price actually moves.
+  # --------------------------------------------------------------------------
+  scheduler:
+    enabled: ${SCHEDULER_ENABLED:true}
+    # How often the dispatcher wakes up and asks "what is due?"
+    tick-seconds: 120
+    # Never fetch one listing more often than this.
+    min-interval-minutes: 60
+    # Never let a listing go longer than this without a check.
+    max-interval-minutes: 1440
+    # Interval assigned to a brand-new listing.
+    initial-interval-minutes: 180
+    # Listings with an active target-price alert get the tight interval.
+    alerted-interval-minutes: 60
+    # Multiply the interval by this when a check finds no price change.
+    backoff-multiplier: 1.6
+    # Divide the interval by this when a check finds a price change.
+    speedup-divisor: 2.5
+    # Most listings processed in a single tick, protects the box from spikes.
+    batch-size: 12
+    # Give up on a listing after this many consecutive failures.
+    max-consecutive-failures: 8
+    # Scrape telemetry older than this is deleted nightly, so the table cannot
+    # fill a small EC2 disk. Must stay above the widest metrics window (30 days).
+    attempt-retention-days: 45
+    # Wait for the app to finish starting before the first fetch.
+    startup-delay-seconds: 45
+    # Nightly telemetry prune. JVM local time, which deploys set to UTC.
+    cleanup-cron: "0 40 3 * * *"
+
+  alerts:
+    enabled: ${MAIL_ENABLED:false}
+    from: ${MAIL_FROM:PricePilot <noreply@example.com>}
+    # Do not email the same user about the same product more than once per N hours.
+    cooldown-hours: 12
+
+  limits:
+    max-tracked-products-per-user: 40
+    max-listings-per-product: 6
+    # Manual refresh button rate limit, per user.
+    manual-refresh-per-hour: 30
+    # How far back charts and "changed this much" figures look. Must stay below
+    # scheduler.attempt-retention-days, or the check log will look emptier than the chart.
+    history-window-days: 30
+
+logging:
+  level:
+    root: INFO
+    com.pricepilot: ${LOG_LEVEL:INFO}
+    org.springframework.web: INFO
+    org.hibernate.SQL: WARN
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} %-5level [%thread] %logger{36} - %msg%n"
+
+---
+# ============================================================================
+# Local development profile:  mvn spring-boot:run -Dspring-boot.run.profiles=dev
+# ============================================================================
+spring:
+  config:
+    activate:
+      on-profile: dev
+  jpa:
+    show-sql: true
+logging:
+  level:
+    com.pricepilot: DEBUG
+pricepilot:
+  scheduler:
+    enabled: false   # keep dev runs from hitting retailers unprompted

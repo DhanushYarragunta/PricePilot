@@ -1,0 +1,16 @@
+# Never copy a local node_modules into the build context. It can be hundreds of
+# megabytes, it would be discarded by `npm ci` anyway, and on Windows it may
+# contain platform-specific binaries that do not run in the Alpine builder.
+node_modules/
+dist/
+
+# Local env files. `.env.example` is harmless but there is no reason for any of
+# them to reach the image — nothing under src/ reads an environment variable.
+.env
+.env.local
+.env.*.local
+
+.vscode/
+.idea/
+.DS_Store
+*.log

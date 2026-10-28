@@ -1,0 +1,94 @@
+# ════════════════════════════════════════════════════════════════════════════
+#  PricePilot site configuration — plain HTTP, no TLS
+#
+#  Selected by 10-pick-site.sh when TLS_ENABLED is not "true". This is the
+#  configuration for the first hour of a deployment and for two situations that
+#  are permanent for some people:
+#
+#    * There is no domain name yet. Let's Encrypt will not issue a certificate
+#      for an ec2-13-234-x-y.ap-south-1.compute.amazonaws.com hostname, so a box
+#      reachable only by its AWS DNS name cannot have a real certificate at all.
+#    * Something else terminates TLS — CloudFront, an ALB, Cloudflare — and this
+#      container only ever sees plain HTTP from it.
+#
+#  Keeping this as a separate file rather than commenting out the TLS blocks in
+#  the other one means neither config is ever half-edited, and switching between
+#  them is one environment variable instead of a text edit on a live box.
+# ════════════════════════════════════════════════════════════════════════════
+
+server {
+    listen 80 default_server;
+    listen [::]:80 default_server;
+
+    # default_server and `_` together: this answers on whatever hostname the
+    # request arrived with, which is what makes it work on localhost, on an EC2
+    # public DNS name and on an IP address without being told which.
+    server_name _;
+
+    # Still served, even here. Someone running without TLS today will point a
+    # domain at this box tomorrow, and init-letsencrypt.sh needs this path to
+    # answer while the switch to the TLS config has not happened yet.
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+        autoindex off;
+    }
+
+    limit_conn conn 24;
+
+    location /api/ {
+        limit_req zone=api burst=20 nodelay;
+
+        proxy_pass http://app:8080;
+
+        proxy_http_version 1.1;
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Host  $host;
+        proxy_set_header X-Forwarded-Port  $server_port;
+
+        # Sized for POST /api/products, which fetches a retailer's page before it
+        # answers. See the TLS config for the full reasoning; the number has to
+        # be the same in both or the behaviour changes when TLS is switched on.
+        proxy_connect_timeout 10s;
+        proxy_send_timeout    90s;
+        proxy_read_timeout    90s;
+        proxy_buffering off;
+
+        add_header Cache-Control "no-store" always;
+    }
+
+    location /actuator/health {
+        proxy_pass http://app:8080/actuator/health;
+        proxy_set_header Host $host;
+        access_log off;
+    }
+
+    # No HSTS here, and that is not an oversight. Strict-Transport-Security sent
+    # over plain HTTP is ignored by browsers anyway, and if it were honoured it
+    # would lock visitors out of a site that has no HTTPS to redirect them to.
+    # The rest of the headers are worth having either way.
+    add_header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data: https:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-Frame-Options "DENY" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+
+    location /assets/ {
+        root /usr/share/nginx/html;
+        expires 1y;
+        add_header Cache-Control "public, immutable" always;
+        access_log off;
+    }
+
+    location / {
+        root /usr/share/nginx/html;
+        try_files $uri $uri/ /index.html;
+
+        location = /index.html {
+            root /usr/share/nginx/html;
+            expires -1;
+            add_header Cache-Control "no-store, must-revalidate" always;
+        }
+    }
+}

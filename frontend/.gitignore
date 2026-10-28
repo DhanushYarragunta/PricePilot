@@ -1,0 +1,29 @@
+node_modules/
+dist/
+dist-ssr/
+
+# Vite's local env files. `.env.example` above is committed; these are not, because they are
+# per-machine and the moment one of them carries a secret it is already too late.
+.env
+.env.local
+.env.*.local
+
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.pnpm-store/
+
+# Editor and OS droppings. .vscode is excluded with an exception for extension recommendations,
+# which are a property of the project rather than of whoever last opened it.
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Vite's dependency pre-bundling cache. Safe to delete, and the usual fix when a dependency upgrade
+# appears not to have taken effect.
+.vite/
+node_modules/.vite/

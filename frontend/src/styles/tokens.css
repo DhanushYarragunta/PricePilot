@@ -1,0 +1,114 @@
+/*
+ * Design tokens.
+ *
+ * ── The one rule everything else follows ─────────────────────────────────────
+ * Colour means direction. In a price tracker there are exactly two facts a glance needs to deliver:
+ * the price fell, or the price rose. So hue is spent only on those, plus one reserved accent for
+ * "this is the lowest we have ever seen". Everything structural — surfaces, rules, type, borders — is
+ * navy ink on cool paper. The discipline is what makes a single jade number legible as information
+ * rather than as decoration, and it is why there are no gradients, tints or coloured cards here.
+ *
+ * ── Why these hues ──────────────────────────────────────────────────────────
+ * Jade for a fall and oxblood for a rise, rather than the green/red of a trading screen, because
+ * this is a shopping tool and the meanings are inverted: a falling price is the good news. Jade and
+ * oxblood are far enough from traffic-light green and red to stop the finance reflex, and both hold
+ * their meaning for the ~8% of men with red-green colour vision deficiency, who read them as
+ * dark-teal and dark-brown. Direction is never carried by colour alone regardless — every movement
+ * also carries a ▼/▲ and words.
+ *
+ * Saffron appears in exactly one place in the entire interface: the all-time-low marker. One
+ * accessory.
+ */
+
+:root {
+  color-scheme: light;
+
+  /* ── Surfaces ──────────────────────────────────────────────────────────── */
+  /* Cool paper with a blue-grey cast, not cream. Panels sit above it in plain white, so the page
+     reads as an instrument with lit panels rather than as a stack of cards on a tinted background. */
+  --paper: #eef1f5;
+  --panel: #ffffff;
+  --panel-sunk: #f7f9fb;
+
+  /* ── Ink ───────────────────────────────────────────────────────────────── */
+  /* A real navy, chromatic all the way down, rather than a tinted near-black. */
+  --ink: #16233b;
+  --ink-soft: #566481;
+  --ink-faint: #8995ab;
+  --ink-inverse: #f4f6f8;
+
+  /* ── Rules ─────────────────────────────────────────────────────────────── */
+  /* Structure is drawn with hairlines, never with shadows. A shadow says "this floats"; a price
+     list is not floating, it is a ledger. */
+  --rule: #d8dee7;
+  --rule-strong: #b9c3d1;
+
+  /* ── Direction ─────────────────────────────────────────────────────────── */
+  --fall: #0a6b5c;
+  --fall-wash: #e2efec;
+  --rise: #8f2d3c;
+  --rise-wash: #f3e6e8;
+
+  /* ── The one accent ────────────────────────────────────────────────────── */
+  --low: #c17d12;
+  --low-wash: #fbf0dc;
+
+  /* ── Type ──────────────────────────────────────────────────────────────── */
+  --face-display: 'Bricolage Grotesque', 'Archivo', system-ui, sans-serif;
+  --face-text: 'Archivo', system-ui, -apple-system, 'Segoe UI', sans-serif;
+
+  /*
+   * A modular scale at 1.25 from a 16px base, rounded to whole pixels so hairlines stay crisp.
+   * Display sizes break out of the scale deliberately: a price is the largest thing on a product
+   * page by a wide margin, because it is the one piece of information the page exists to deliver.
+   */
+  --t-micro: 0.6875rem; /* 11px — timestamps and machine strings only */
+  --t-small: 0.8125rem; /* 13px */
+  --t-body: 0.9375rem; /* 15px */
+  --t-lead: 1.125rem; /* 18px */
+  --t-h3: 1.375rem; /* 22px */
+  --t-h2: 1.75rem; /* 28px */
+  --t-h1: 2.625rem; /* 42px */
+  --t-price: 3.25rem; /* 52px */
+  --t-hero: clamp(2.75rem, 7vw, 5.5rem);
+
+  /* ── Space ─────────────────────────────────────────────────────────────── */
+  --s-1: 0.25rem;
+  --s-2: 0.5rem;
+  --s-3: 0.75rem;
+  --s-4: 1rem;
+  --s-5: 1.5rem;
+  --s-6: 2rem;
+  --s-7: 3rem;
+  --s-8: 4.5rem;
+
+  /* ── Shape ─────────────────────────────────────────────────────────────── */
+  /*
+   * Radius encodes affordance rather than taste. Rows, panels and tables are square, because they
+   * are a record. Anything rounded is something you can press. That makes "is this clickable?"
+   * answerable from shape alone, which is one fewer thing for a hover state to have to say.
+   */
+  --r-control: 999px;
+  --r-field: 3px;
+
+  --line: 1px solid var(--rule);
+  --focus: 2px solid var(--ink);
+
+  --measure: 66ch;
+  --page: 1180px;
+}
+
+/* A genuine preference, honoured rather than noted. */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --motion-fast: 0ms;
+    --motion-slow: 0ms;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  :root {
+    --motion-fast: 120ms;
+    --motion-slow: 420ms;
+  }
+}

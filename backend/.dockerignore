@@ -1,0 +1,15 @@
+target/
+*.jar
+*.war
+
+# The runtime copy of the extraction rules is mounted from the host, not built in.
+config/
+
+.idea/
+*.iml
+.vscode/
+.DS_Store
+
+# Logs and heap dumps, in case anything ever writes one into the project folder.
+*.log
+*.hprof

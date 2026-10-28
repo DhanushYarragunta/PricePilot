@@ -1,0 +1,282 @@
+# ════════════════════════════════════════════════════════════════════════════
+#  PricePilot — one box, four containers
+#
+#  The whole application on a single t3.small: Postgres, Spring Boot, nginx, and
+#  a certbot that wakes up twice a day. No RDS, no load balancer, no ECS.
+#
+#  ── Why one box ──
+#  RDS db.t3.micro alone is around $15/month before storage, and an ALB is
+#  another $16 before a single request. On a budget of $100–150 of credit that is
+#  most of the money spent on managed versions of two processes that fit
+#  comfortably beside each other. A t3.small plus 20 GB of gp3 is roughly
+#  $17/month all in, which leaves the credit lasting most of a year — and keeping
+#  a project reachable for months is worth more here than surviving the loss of
+#  an availability zone.
+#
+#  The honest trade: this box is a single point of failure, and a restart is
+#  visible downtime of about forty seconds. `restart: unless-stopped` and the
+#  health checks below are what make that the worst case rather than the start of
+#  an outage nobody notices.
+#
+#  Usage:
+#    cp .env.example .env     # then fill it in
+#    docker compose up -d --build
+#    docker compose logs -f app
+# ════════════════════════════════════════════════════════════════════════════
+
+name: pricepilot
+
+services:
+
+  # ──────────────────────────────────────────────────────────── database
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-pricepilot}
+      POSTGRES_USER: ${POSTGRES_USER:-pricepilot}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env}
+      # Checksums on, which can only be chosen at initdb time and cannot be
+      # turned on later without dumping and reloading. On EBS a silently
+      # corrupted page would otherwise surface as wrong prices rather than as an
+      # error, and this is a free decision now and an expensive one in a year.
+      POSTGRES_INITDB_ARGS: "--data-checksums"
+      # Everything in this stack is UTC — the JVM container, the scheduler's cron
+      # expression, and every timestamp column.
+      TZ: UTC
+
+    # ── Postgres tuning for 512 MB ──
+    #
+    # The defaults assume a machine with more room than this and they are what
+    # make Postgres the first thing the kernel's OOM killer notices on a small
+    # box. shared_buffers at a quarter of the container's limit is the standard
+    # ratio; effective_cache_size is a hint, not an allocation, and telling the
+    # planner there is around 768 MB of OS cache available is what keeps it
+    # choosing index scans over sequential ones on price_observation, which is by
+    # far the largest table here.
+    #
+    # max_connections is 40 against a Hikari pool of 8: room for the pool, a psql
+    # session during a deploy, and the backup script, with nothing spare for a
+    # connection leak to hide in.
+    command: >
+      postgres
+        -c max_connections=40
+        -c shared_buffers=128MB
+        -c effective_cache_size=768MB
+        -c work_mem=4MB
+        -c maintenance_work_mem=64MB
+        -c wal_compression=on
+        -c checkpoint_completion_target=0.9
+        -c random_page_cost=1.1
+        -c log_min_duration_statement=2000
+        -c log_lock_waits=on
+        -c timezone=UTC
+
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+    # No published port, deliberately.
+    #
+    # Postgres is reachable from the `app` container over the internal network
+    # and from nowhere else. Publishing 5432 on a public EC2 instance exposes it
+    # to the entire internet the moment a security group is widened by accident,
+    # and the credential protecting it is one line in a .env file. Connecting
+    # from a laptop is done with an SSH tunnel; the runbook has the command.
+
+    healthcheck:
+      # `-U` with the real user: pg_isready without it checks as the OS user and
+      # answers OK while the application's role is still being created by initdb.
+      # depends_on waits on this, so a false OK here produces a Spring start that
+      # fails on authentication.
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-pricepilot} -d ${POSTGRES_DB:-pricepilot} -q"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+    mem_limit: 512m
+    mem_reservation: 256m
+
+    logging: &logging
+      # Without this, JSON log files grow until the 20 GB volume is full, and the
+      # first symptom is Postgres refusing writes — a disk-full outage caused
+      # entirely by logging about it.
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ──────────────────────────────────────────────────────── spring boot
+  app:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: pricepilot-app:latest
+    restart: unless-stopped
+
+    depends_on:
+      db:
+        # Not `service_started`. Flyway runs during Spring's startup, and a
+        # Postgres that has accepted a TCP connection but not finished initdb
+        # fails the first migration — which with ddl-auto: validate means the
+        # app exits rather than retries.
+        condition: service_healthy
+
+    environment:
+      # ── Database ──
+      DB_URL: jdbc:postgresql://db:5432/${POSTGRES_DB:-pricepilot}
+      POSTGRES_USER: ${POSTGRES_USER:-pricepilot}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env}
+      DB_POOL_MAX: ${DB_POOL_MAX:-8}
+
+      # ── Auth ──
+      # No default. A JWT secret that falls back to a value committed in a public
+      # repository is the same as having no authentication at all, so the deploy
+      # fails here rather than succeeding insecurely.
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set in .env - at least 32 characters}
+      JWT_TTL_HOURS: ${JWT_TTL_HOURS:-72}
+      SIGNUP_INVITE_CODE: ${SIGNUP_INVITE_CODE:-}
+
+      # ── Public identity ──
+      # Used in alert emails and for CORS. Wrong here means links in emails that
+      # point at localhost.
+      APP_PUBLIC_URL: ${APP_PUBLIC_URL:-http://localhost}
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost}
+
+      # ── Claude: the only LLM ──
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-haiku-4-5}
+      AI_MONTHLY_BUDGET_USD: ${AI_MONTHLY_BUDGET_USD:-5.00}
+
+      # ── Tavily: discovery only, never a price source ──
+      TAVILY_API_KEY: ${TAVILY_API_KEY:-}
+      TAVILY_MONTHLY_CALL_BUDGET: ${TAVILY_MONTHLY_CALL_BUDGET:-500}
+
+      # ── Scraping ──
+      SCRAPE_TIMEOUT_MS: ${SCRAPE_TIMEOUT_MS:-20000}
+      SCRAPE_MAX_CONCURRENCY: ${SCRAPE_MAX_CONCURRENCY:-2}
+      SCRAPE_MIN_DELAY_MS: ${SCRAPE_MIN_DELAY_MS:-4000}
+      SCRAPE_FRESHNESS_SECONDS: ${SCRAPE_FRESHNESS_SECONDS:-900}
+      SCRAPER_PROVIDER: ${SCRAPER_PROVIDER:-none}
+      SCRAPER_API_KEY: ${SCRAPER_API_KEY:-}
+      SCRAPER_MONTHLY_CALL_BUDGET: ${SCRAPER_MONTHLY_CALL_BUDGET:-800}
+      # Points at the bind-mounted file below rather than the copy inside the
+      # jar. This is what makes POST /api/admin/rules/reload useful: edit the
+      # file on the host, press the button, no rebuild and no restart.
+      SCRAPE_RULES_PATH: file:/app/config/domain-rules.yml
+
+      # ── Scheduler ──
+      SCHEDULER_ENABLED: ${SCHEDULER_ENABLED:-true}
+
+      # ── Email, optional ──
+      MAIL_ENABLED: ${MAIL_ENABLED:-false}
+      MAIL_HOST: ${MAIL_HOST:-smtp.gmail.com}
+      MAIL_PORT: ${MAIL_PORT:-587}
+      MAIL_USERNAME: ${MAIL_USERNAME:-}
+      MAIL_PASSWORD: ${MAIL_PASSWORD:-}
+      MAIL_FROM: ${MAIL_FROM:-PricePilot <noreply@example.com>}
+
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+
+    volumes:
+      # Read-only, and pointed straight at the file in the repository rather than
+      # a copy. `git pull` updates the rules; the admin reload button applies
+      # them. A second copy under deploy/ would mean two files that disagree.
+      - ./backend/src/main/resources/scraping/domain-rules.yml:/app/config/domain-rules.yml:ro
+
+    # Not published either. nginx reaches this over the internal network, so
+    # 8080 is not open to the internet and the security group only ever needs 80,
+    # 443 and SSH. This also means there is no way to reach the API bypassing the
+    # rate limits in the nginx config.
+    expose:
+      - "8080"
+
+    # Explicit here as well as in the image, because `docker compose up` on a
+    # host that has an older image cached would otherwise run without it.
+    stop_grace_period: 40s
+
+    mem_limit: 900m
+    mem_reservation: 512m
+
+    logging: *logging
+
+  # ─────────────────────────────────────────────────── nginx + frontend
+  web:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    image: pricepilot-web:latest
+    restart: unless-stopped
+
+    depends_on:
+      # service_started, not service_healthy, and that is the right choice: nginx
+      # should come up and serve the React app even when the backend is down, so
+      # a visitor sees the interface with an error notice rather than a browser
+      # connection failure. Waiting for the app to be healthy would make a
+      # backend problem look like the whole site being offline.
+      - app
+
+    environment:
+      DOMAIN: ${DOMAIN:-localhost}
+      TLS_ENABLED: ${TLS_ENABLED:-false}
+
+    ports:
+      - "80:80"
+      - "443:443"
+
+    volumes:
+      # Shared with certbot. The certificates it writes appear here, and the
+      # ACME challenge directory is how Let's Encrypt verifies the domain.
+      - certbot-conf:/etc/letsencrypt:ro
+      - certbot-www:/var/www/certbot
+
+    # Reload every six hours, in the background, forever.
+    #
+    # A certificate renewed by the certbot container is a new file on a shared
+    # volume, and nginx holds its certificate in memory from start-up — so
+    # without a reload the site serves an expired certificate while a valid one
+    # sits on disk. Six hours is well inside the thirty days certbot renews at.
+    #
+    # `nginx -g 'daemon off;'` stays in the foreground as PID 1 so the container
+    # lives and dies with it; the reload loop is a background job beside it. The
+    # doubled $$ is Compose's own escape, so the shell receives a single $.
+    command: >
+      /bin/sh -c "while :; do sleep 6h & wait $${!}; nginx -s reload; done & nginx -g 'daemon off;'"
+
+    mem_limit: 128m
+
+    logging: *logging
+
+  # ───────────────────────────────────────────────────────────── certbot
+  certbot:
+    image: certbot/certbot:latest
+    restart: unless-stopped
+
+    volumes:
+      - certbot-conf:/etc/letsencrypt
+      - certbot-www:/var/www/certbot
+
+    # Twelve-hourly renewal attempts, which is what certbot's own documentation
+    # recommends: a certificate is renewed when it has thirty days left, so two
+    # attempts a day gives sixty chances to succeed before anything expires. On a
+    # box that is occasionally rebooted that margin is the difference between a
+    # renewal that is merely late and a site with a browser warning on it.
+    #
+    # Nothing happens here at all until a certificate exists —
+    # deploy/init-letsencrypt.sh obtains the first one. This container only ever
+    # renews.
+    entrypoint: >
+      /bin/sh -c "trap exit TERM; while :; do certbot renew --webroot -w /var/www/certbot --quiet; sleep 12h & wait $${!}; done"
+
+    mem_limit: 128m
+
+    logging: *logging
+
+volumes:
+  # Named volumes rather than bind mounts for everything with state. A bind mount
+  # into ./data would put the database inside the git working tree, where a
+  # careless `git clean -xfd` deletes it.
+  pgdata:
+  certbot-conf:
+  certbot-www:
