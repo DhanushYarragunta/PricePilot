@@ -98,14 +98,23 @@ public class SecurityConfig {
                         // Spring's defaults redirect a browser to a login page that does not exist
                         // here. An API should answer with a status code the frontend can act on.
                         .authenticationEntryPoint((request, response, failure) ->
-                                response.sendError(401, "Authentication required"))
+                                writeError(response, 401, "unauthorized", "Authentication required"))
                         .accessDeniedHandler((request, response, failure) ->
-                                response.sendError(403, "Not allowed")))
+                                writeError(response, 403, "forbidden", "Not allowed")))
                 .headers(headers -> headers
                         .frameOptions(frame -> frame.deny())
                         .contentTypeOptions(Customizer.withDefaults()));
 
         return http.build();
+    }
+
+    private static void writeError(jakarta.servlet.http.HttpServletResponse response,
+                                   int status, String code, String message) throws java.io.IOException {
+        // sendError starts a second /error dispatch after the stateless context is cleared.
+        response.setStatus(status);
+        response.setContentType("application/json");
+        response.getWriter().write("{\"code\":\"" + code + "\",\"message\":\"" + message
+                + "\",\"timestamp\":\"" + java.time.Instant.now() + "\"}");
     }
 
     @Bean

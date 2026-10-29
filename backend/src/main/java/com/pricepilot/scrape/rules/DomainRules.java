@@ -207,8 +207,9 @@ public class DomainRules {
         validateStrategies(host, strategies);
         b.strategies(strategies);
 
-        b.price(selectors(node, "price", host, defaults != null ? defaults.price() : List.of()));
-        b.mrp(selectors(node, "mrp", host, defaults != null ? defaults.mrp() : List.of()));
+        boolean inheritPrices = boolAt(node, "inherit-price-selectors", true, host);
+        b.price(selectors(node, "price", host, inheritPrices && defaults != null ? defaults.price() : List.of()));
+        b.mrp(selectors(node, "mrp", host, inheritPrices && defaults != null ? defaults.mrp() : List.of()));
         b.title(selectors(node, "title", host, defaults != null ? defaults.title() : List.of()));
         b.image(selectors(node, "image", host, defaults != null ? defaults.image() : List.of()));
         b.outOfStockSelectors(selectors(node, "out-of-stock-selectors", host, List.of()));
@@ -249,7 +250,7 @@ public class DomainRules {
     }
 
     private static final List<String> KNOWN_STRATEGIES =
-            List.of("json-ld", "microdata", "meta", "embedded-json", "css");
+            List.of("json-ld", "microdata", "meta", "embedded-json", "css", "browseract");
 
     private static void validateStrategies(String host, List<String> strategies) {
         for (String s : strategies) {

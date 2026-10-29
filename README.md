@@ -92,7 +92,7 @@ The app runs on a single box with 4 containers: PostgreSQL, Spring Boot, nginx (
 
 | Retailer | Status | Strategy |
 |----------|--------|----------|
-| Amazon.in | ✅ | JSON-LD + CSS selectors |
+| Amazon.in | Configured; live verification required | BrowserAct (optional, budgeted) + product CSS |
 | Flipkart | ✅ | Embedded JSON + CSS |
 | Croma | ✅ | JSON-LD + CSS |
 | Reliance Digital | ✅ | JSON-LD + CSS |
@@ -102,6 +102,8 @@ The app runs on a single box with 4 containers: PostgreSQL, Spring Boot, nginx (
 | Myntra | ✅ | State variable extraction |
 | JioMart | ✅ | JSON-LD |
 | Ajio | ✅ | JSON-LD |
+
+See [the scraping audit and deployment runbook](docs/scraping-audit.md) for verified behavior, BrowserAct workflow setup, test coverage, and remaining retailer limitations.
 
 ## Key Design Decisions
 

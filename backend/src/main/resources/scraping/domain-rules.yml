@@ -177,35 +177,37 @@ hosts:
   # that happens the fetch is recorded as BLOCKED and, if an unblocker
   # provider is configured and inside budget, retried through it.
   #
-  # If direct fetches stop working entirely, set unblocker-first: true
-  # below. That spends provider credits on every check, so leave it
-  # false until the /ops page says you have to.
+  # When the API key, published workflow ID and a positive call budget are
+  # configured, BrowserAct runs first. Its workflow must implement the
+  # output contract in docs/scraping-audit.md; configuration is not proof
+  # of successful extraction.
   #
-  # The selector that matters most is span.a-offscreen: Amazon puts the
-  # complete, screen-reader-friendly price there ("₹1,29,999.00") while
-  # the visible markup splits rupees and paise across elements.
+  # If BrowserAct yields no verified result, use explicit product CSS prices.
+  # Do not fall back to generic metadata or unrelated embedded prices.
   # -------------------------------------------------------------------
   amazon.in:
     retailer: "Amazon.in"
     min-delay-ms: 9000
     unblocker-first: false
-    # Amazon's JSON-LD is absent on most PDPs, so CSS is promoted above
-    # it here. embedded-json catches the newer React-rendered layout.
+    # Paid workflow first when enabled; explicit product CSS is the fallback.
     strategies:
+      - browseract
       - css
-      - embedded-json
-      - json-ld
-      - microdata
-      - meta
-    canonical-regex: '/(?:dp|gp/product)/([A-Z0-9]{10})'
+    # Generic metadata/embedded prices may belong to recommendations or installment offers.
+    inherit-price-selectors: false
+    canonical-regex: '/(?:dp|gp/product)/([A-Z0-9]{10})(?:/|$)'
     canonical-format: "https://www.amazon.in/dp/%s"
     price:
+      # The :not(.a-text-price) exclusion is critical: Amazon nests BOTH the
+      # selling price and the MRP inside span.a-price elements.  The MRP
+      # carries the additional class .a-text-price; without this exclusion
+      # the first match in the DOM can be the MRP, which is the bug that
+      # made the app report ₹3,999 instead of ₹1,609 for a discounted item.
       - "#corePriceDisplay_desktop_feature_div span.priceToPay span.a-offscreen"
-      - "#corePriceDisplay_desktop_feature_div span.a-price span.a-offscreen"
-      - "#corePrice_feature_div span.a-price span.a-offscreen"
-      - "#corePrice_desktop span.a-price span.a-offscreen"
-      - "#apex_desktop span.a-price span.a-offscreen"
-      - "span.a-price.priceToPay span.a-offscreen"
+      - "#corePriceDisplay_desktop_feature_div span.a-price:not(.a-text-price) span.a-offscreen"
+      - "#corePrice_feature_div span.a-price:not(.a-text-price) span.a-offscreen"
+      - "#corePrice_desktop span.a-price:not(.a-text-price) span.a-offscreen"
+      - "#apex_desktop span.a-price:not(.a-text-price) span.a-offscreen"
       - "#price_inside_buybox"
       - "#newBuyBoxPrice"
       - "#priceblock_ourprice"
@@ -214,7 +216,7 @@ hosts:
       - "#tp_price_block_total_price_ours span.a-offscreen"
     mrp:
       - "#corePriceDisplay_desktop_feature_div span.a-price.a-text-price span.a-offscreen"
-      - "span.basisPrice span.a-offscreen"
+      - "#corePriceDisplay_desktop_feature_div span.basisPrice span.a-offscreen"
       - "#listPrice"
       - "#priceblock_listprice"
     title:

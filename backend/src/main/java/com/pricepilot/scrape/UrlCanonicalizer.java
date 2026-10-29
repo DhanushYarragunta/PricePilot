@@ -100,6 +100,9 @@ public class UrlCanonicalizer {
                 path = captured;
                 query = null;
             } else {
+                if ("amazon.in".equals(rule.host())) {
+                    throw new UnsupportedUrlException("Use an Amazon.in product URL containing /dp/ASIN or /gp/product/ASIN.");
+                }
                 log.debug("canonical-regex for {} did not match path {} — falling back to "
                         + "generic normalisation", rule.host(), path);
             }

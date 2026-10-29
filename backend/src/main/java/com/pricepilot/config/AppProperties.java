@@ -23,6 +23,7 @@ public class AppProperties {
     private Scheduler scheduler = new Scheduler();
     private Alerts alerts = new Alerts();
     private Limits limits = new Limits();
+    private BrowserAct browserAct = new BrowserAct();
 
     public Auth getAuth() { return auth; }
     public void setAuth(Auth auth) { this.auth = auth; }
@@ -42,6 +43,8 @@ public class AppProperties {
     public void setAlerts(Alerts alerts) { this.alerts = alerts; }
     public Limits getLimits() { return limits; }
     public void setLimits(Limits limits) { this.limits = limits; }
+    public BrowserAct getBrowserAct() { return browserAct; }
+    public void setBrowserAct(BrowserAct browserAct) { this.browserAct = browserAct; }
 
     // ------------------------------------------------------------------ auth
 
@@ -272,5 +275,39 @@ public class AppProperties {
         public void setManualRefreshPerHour(int manualRefreshPerHour) { this.manualRefreshPerHour = manualRefreshPerHour; }
         public int getHistoryWindowDays() { return historyWindowDays; }
         public void setHistoryWindowDays(int historyWindowDays) { this.historyWindowDays = historyWindowDays; }
+    }
+
+    // ---------------------------------------------------------------- browseract
+
+    /**
+     * BrowserAct integration for headless browser-based price extraction.
+     *
+     * <p>Used for retailers that block direct HTTP requests (e.g. Amazon.in).
+     * BrowserAct runs a pre-built Bot using a real browser with anti-bot bypass,
+     * extracting the correct selling price, MRP, and product details.
+     */
+    public static class BrowserAct {
+        /** API key for authenticating with BrowserAct. Never log or expose this. */
+        private String apiKey = "";
+        /** The workflow/Bot ID that extracts Amazon.in product data. */
+        private String workflowId = "";
+        /** Request timeout in milliseconds. BrowserAct Bots can take 30-60s. */
+        private int timeoutMs = 90000;
+        /** Zero disables submissions; -1 explicitly allows unlimited metered submissions. */
+        private int monthlyCallBudget = 0;
+
+        public boolean isConfigured() {
+            return apiKey != null && !apiKey.isBlank()
+                    && workflowId != null && !workflowId.isBlank();
+        }
+
+        public String getApiKey() { return apiKey; }
+        public void setApiKey(String apiKey) { this.apiKey = apiKey; }
+        public String getWorkflowId() { return workflowId; }
+        public void setWorkflowId(String workflowId) { this.workflowId = workflowId; }
+        public int getTimeoutMs() { return timeoutMs; }
+        public void setTimeoutMs(int timeoutMs) { this.timeoutMs = timeoutMs; }
+        public int getMonthlyCallBudget() { return monthlyCallBudget; }
+        public void setMonthlyCallBudget(int monthlyCallBudget) { this.monthlyCallBudget = monthlyCallBudget; }
     }
 }

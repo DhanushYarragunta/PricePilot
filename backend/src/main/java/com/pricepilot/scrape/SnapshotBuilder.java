@@ -35,7 +35,7 @@ public final class SnapshotBuilder {
 
     /** First price wins. Later strategies cannot overwrite it. */
     public void offerPrice(BigDecimal value, String strategy) {
-        if (value == null || price != null) {
+        if (!PriceParser.isPlausible(value) || price != null) {
             return;
         }
         price = value;
@@ -44,18 +44,14 @@ public final class SnapshotBuilder {
     }
 
     /**
-     * An MRP below the selling price is nonsense and means the selector matched the wrong element,
-     * so it is dropped rather than stored. Bad data here would make the fake-discount check lie.
+     * Preserve MRP evidence, including contradictions, for final snapshot validation.
+     * Silently discarding a conflict could make an incorrect selling price look verified.
      */
     public void offerMrp(BigDecimal value, String strategy) {
         if (value == null || mrp != null) {
             return;
         }
-        if (price != null && value.compareTo(price) < 0) {
-            log.debug("Ignoring MRP {} from {} — it is below the selling price {}",
-                    value, strategy, price);
-            return;
-        }
+        // Keep contradictory evidence so final validation rejects the snapshot.
         mrp = value;
     }
 

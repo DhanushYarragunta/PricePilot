@@ -1,6 +1,9 @@
 package com.pricepilot.scrape;
 
 import com.pricepilot.domain.ScrapeOutcome;
+import com.pricepilot.scrape.browseract.BrowserActClient;
+import com.pricepilot.scrape.browseract.BrowserActPriceExtractor;
+import com.pricepilot.scrape.browseract.BrowserActResult;
 import com.pricepilot.scrape.extract.PriceExtractor;
 import com.pricepilot.scrape.rules.DomainRules;
 import com.pricepilot.scrape.rules.HostRule;
@@ -60,6 +63,7 @@ public class ScrapeEngine {
     private final HttpPageFetcher directFetcher;
     private final UnblockerPageFetcher unblocker;
     private final UrlCanonicalizer canonicalizer;
+    private final BrowserActClient browserActClient;
 
     /** Extractors by strategy name, so the rule file's ordering can drive the chain. */
     private final Map<String, PriceExtractor> extractors = new LinkedHashMap<>();
@@ -69,12 +73,14 @@ public class ScrapeEngine {
                         HttpPageFetcher directFetcher,
                         UnblockerPageFetcher unblocker,
                         UrlCanonicalizer canonicalizer,
+                        BrowserActClient browserActClient,
                         List<PriceExtractor> available) {
         this.rules = rules;
         this.gate = gate;
         this.directFetcher = directFetcher;
         this.unblocker = unblocker;
         this.canonicalizer = canonicalizer;
+        this.browserActClient = browserActClient;
         for (PriceExtractor extractor : available) {
             extractors.put(extractor.name(), extractor);
         }
@@ -110,6 +116,26 @@ public class ScrapeEngine {
 
     public ScrapeResult scrape(String url, HostRule rule) {
         String host = rule.host();
+
+        // BrowserAct is a fetch operation, attempted once before the HTML chain.
+        if ("amazon.in".equals(host) && rule.supports("browseract") && browserActClient.isConfigured()) {
+            long started = System.nanoTime();
+            try {
+                Optional<BrowserActResult> result = gate.execute("browseract:" + host,
+                        rule.minDelayMs(), () -> browserActClient.extract(url));
+                if (result.isPresent()) {
+                    ProductSnapshot snapshot = BrowserActPriceExtractor.snapshot(result.get());
+                    if (snapshot.isVerified()) {
+                        int elapsed = (int) java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started);
+                        return new ScrapeResult(ScrapeOutcome.SUCCESS, snapshot, host, url,
+                                null, elapsed, 0, FetchedPage.FetchSource.BROWSERACT, "browseract", null);
+                    }
+                }
+            } catch (RuntimeException e) {
+                log.warn("BrowserAct unavailable ({}); trying HTML extraction", e.getClass().getSimpleName());
+            }
+            log.info("BrowserAct produced no verified price; trying HTML extraction for {}", host);
+        }
 
         // A host in cool-off gets no direct request at all. But cool-off is about our IP address,
         // and the unblocker's request leaves from somewhere else entirely, so the fallback is still
@@ -242,32 +268,32 @@ public class ScrapeEngine {
             log.debug("{} redirected to {}", page.requestedUrl(), page.finalUrl());
         }
 
+        if ("amazon.in".equals(host)) {
+            try {
+                if (!canonicalizer.canonicalize(page.requestedUrl()).hash()
+                        .equals(canonicalizer.canonicalize(page.finalUrl()).hash())) {
+                    return ScrapeResult.noPrice(host, page, "Amazon redirected to a different product; no price accepted.");
+                }
+            } catch (UnsupportedUrlException e) {
+                return ScrapeResult.noPrice(host, page, "Amazon response is not a product URL; no price accepted.");
+            }
+        }
         SnapshotBuilder builder = new SnapshotBuilder(rule.currency());
         StringBuilder tried = new StringBuilder();
 
         for (String strategyName : rule.strategies()) {
+            // Already attempted above. HTML extraction must never submit paid work.
+            if ("browseract".equals(strategyName)) continue;
             PriceExtractor extractor = extractors.get(strategyName);
-            if (extractor == null) {
-                // DomainRules validates strategy names at load time, so this means a new strategy
-                // was added to the rules file without a matching bean.
-                log.warn("No extractor registered for strategy '{}' (host {})", strategyName, host);
-                continue;
-            }
-            if (!tried.isEmpty()) {
-                tried.append(", ");
-            }
+            if (extractor == null) continue;
+            if (!tried.isEmpty()) tried.append(", ");
             tried.append(strategyName);
             try {
                 extractor.contribute(doc, page.html(), rule, builder);
             } catch (RuntimeException e) {
-                // One strategy failing is not a failed scrape. Log it with the host and strategy so
-                // it is findable, and let the rest of the chain run.
-                log.warn("Strategy {} threw on {}: {}: {}", strategyName, host,
-                        e.getClass().getSimpleName(), e.getMessage());
+                log.warn("Strategy {} failed on {} ({})", strategyName, host, e.getClass().getSimpleName());
             }
-            if (builder.isComplete()) {
-                break;
-            }
+            if (builder.isComplete()) break;
         }
 
         if (!builder.hasPrice()) {
@@ -284,6 +310,10 @@ public class ScrapeEngine {
         }
 
         ProductSnapshot snapshot = builder.build();
+        if (!snapshot.isVerified()) {
+            return ScrapeResult.noPrice(host, page,
+                    "Price, MRP, currency or product title could not be verified; previous price preserved.");
+        }
         log.debug("{} -> {} {} via {} ({}ms, {} bytes)", host, snapshot.currency(),
                 snapshot.price(), snapshot.strategy(), page.latencyMs(), page.bytes());
         return ScrapeResult.success(snapshot, host, page);

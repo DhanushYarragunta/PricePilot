@@ -63,18 +63,20 @@ public class BudgetGuard {
     /**
      * Claims one call against a per-month call budget.
      *
-     * @param budget maximum calls this month; zero or less disables the provider entirely
+     * @param budget maximum calls this month; non-positive disables the provider except
+     *               BrowserAct's explicit -1 setting, which removes its cap but retains metering
      * @return true if the call may proceed. The counter has already been incremented, so a caller
      *         that gets {@code true} and then decides not to make the call has spent budget for
      *         nothing — check everything else first.
      */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public boolean tryConsumeCall(ApiProvider provider, int budget) {
-        if (budget <= 0) {
+        boolean unlimited = provider == ApiProvider.BROWSERACT && budget == -1;
+        if (budget <= 0 && !unlimited) {
             return false;
         }
         ApiUsage usage = lockRow(provider);
-        if (usage.getCalls() >= budget) {
+        if (!unlimited && usage.getCalls() >= budget) {
             log.warn("{} monthly call budget exhausted: {}/{} used in {}. Further calls are "
                      + "refused until next month, or until the budget is raised.",
                     provider, usage.getCalls(), budget, usage.getPeriod());
@@ -83,6 +85,10 @@ public class BudgetGuard {
         usage.setCalls(usage.getCalls() + 1);
         usage.setUpdatedAt(java.time.Instant.now());
         repo.save(usage);
+
+        if (unlimited) {
+            return true;
+        }
 
         int remaining = budget - usage.getCalls();
         if (remaining <= 5 || remaining % 100 == 0) {

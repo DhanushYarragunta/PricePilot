@@ -56,15 +56,8 @@ public class JwtAuthFilter extends OncePerRequestFilter {
             }
         }
 
-        try {
-            chain.doFilter(request, response);
-        } finally {
-            // The context is thread-local and the container pools threads. Without this, the next
-            // request served by this thread could inherit the previous caller's identity — a quiet,
-            // intermittent authorisation bug of the worst kind. Spring's own filter normally clears
-            // it, and clearing it again here is cheap insurance against ordering changes.
-            SecurityContextHolder.clearContext();
-        }
+        // SecurityContextHolderFilter owns cleanup for the complete security chain.
+        chain.doFilter(request, response);
     }
 
     private static String bearerToken(HttpServletRequest request) {

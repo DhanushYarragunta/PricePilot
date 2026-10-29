@@ -226,6 +226,17 @@ pricepilot:
     # Do not email the same user about the same product more than once per N hours.
     cooldown-hours: 12
 
+  # --------------------------------------------------------------------------
+  # BrowserAct — headless browser extraction for anti-bot-protected retailers.
+  # Used for Amazon.in where direct HTTP fetches get CAPTCHAs. Each API call
+  # consumes credits, so this is only activated for hosts that need it.
+  # --------------------------------------------------------------------------
+  browser-act:
+    api-key: ${BROWSERACT_API_KEY:}
+    workflow-id: ${BROWSERACT_WORKFLOW_ID:}
+    timeout-ms: ${BROWSERACT_TIMEOUT_MS:90000}
+    monthly-call-budget: ${BROWSERACT_MONTHLY_CALL_BUDGET:0}
+
   limits:
     max-tracked-products-per-user: 40
     max-listings-per-product: 6
