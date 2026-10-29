@@ -26,7 +26,9 @@ public record FetchedPage(
         /** Fetched directly by this server. Free. */
         DIRECT,
         /** Fetched through a paid unblocker API. Costs a credit. */
-        UNBLOCKER;
+        UNBLOCKER,
+        /** Structured workflow output; no retailer HTTP status or HTML was returned. */
+        BROWSERACT;
 
         public String suffix() {
             return this == UNBLOCKER ? "+unblocker" : "";

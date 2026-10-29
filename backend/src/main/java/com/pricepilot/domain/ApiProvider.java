@@ -9,5 +9,7 @@ public enum ApiProvider {
     /** Tavily, for cross-retailer discovery. Metered in calls. */
     TAVILY,
     /** Optional scraping/unblocker API, the last resort in the fetch chain. */
-    UNBLOCKER
+    UNBLOCKER,
+    /** BrowserAct workflow submissions, including unsuccessful attempts. */
+    BROWSERACT
 }

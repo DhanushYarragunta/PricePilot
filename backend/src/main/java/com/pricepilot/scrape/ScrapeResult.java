@@ -54,7 +54,7 @@ public record ScrapeResult(
     }
 
     public boolean paid() {
-        return source == FetchedPage.FetchSource.UNBLOCKER;
+        return source == FetchedPage.FetchSource.UNBLOCKER || source == FetchedPage.FetchSource.BROWSERACT;
     }
 
     public static ScrapeResult success(ProductSnapshot snapshot, String host, FetchedPage page) {

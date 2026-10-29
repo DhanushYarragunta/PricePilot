@@ -166,6 +166,12 @@ services:
       # file on the host, press the button, no rebuild and no restart.
       SCRAPE_RULES_PATH: file:/app/config/domain-rules.yml
 
+      # ── BrowserAct: headless browser extraction for anti-bot retailers ──
+      BROWSERACT_API_KEY: ${BROWSERACT_API_KEY:-}
+      BROWSERACT_WORKFLOW_ID: ${BROWSERACT_WORKFLOW_ID:-}
+      BROWSERACT_TIMEOUT_MS: ${BROWSERACT_TIMEOUT_MS:-90000}
+      BROWSERACT_MONTHLY_CALL_BUDGET: ${BROWSERACT_MONTHLY_CALL_BUDGET:-0}
+
       # ── Scheduler ──
       SCHEDULER_ENABLED: ${SCHEDULER_ENABLED:-true}
 

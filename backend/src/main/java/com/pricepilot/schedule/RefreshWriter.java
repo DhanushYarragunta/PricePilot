@@ -80,6 +80,11 @@ public class RefreshWriter {
      */
     @Transactional
     public RefreshResult recordSuccess(Long listingId, ScrapeResult result, TriggerSource source) {
+        if (!result.isSuccess() || result.snapshot() == null || !result.snapshot().isVerified()) {
+            return recordFailure(listingId, ScrapeResult.aborted(ScrapeOutcome.NO_PRICE,
+                    result.host(), result.finalUrl(), result.httpStatus(), result.latencyMs(),
+                    "Extraction failed validation; previous price preserved."), source);
+        }
         Listing listing = listings.findWithProductById(listingId).orElse(null);
         if (listing == null) {
             return RefreshResult.vanished(listingId);

@@ -55,18 +55,22 @@ public class CssRuleExtractor implements PriceExtractor {
 
     @Override
     public void contribute(Document doc, String html, HostRule rule, SnapshotBuilder out) {
-        firstNumber(doc, rule.price(), rule).ifPresent(v -> out.offerPrice(v, name()));
-        firstNumber(doc, rule.mrp(), rule).ifPresent(v -> out.offerMrp(v, name()));
+        firstNumber(doc, rule.price(), rule, true).ifPresent(v -> out.offerPrice(v, name()));
+        firstNumber(doc, rule.mrp(), rule, false).ifPresent(v -> out.offerMrp(v, name()));
         firstText(doc, rule.title(), rule).ifPresent(out::offerTitle);
         firstUrl(doc, rule.image(), rule).ifPresent(out::offerImage);
     }
 
     // ------------------------------------------------------------------ selector application
 
-    private static Optional<BigDecimal> firstNumber(Document doc, List<SelectorSpec> specs, HostRule rule) {
+    private static Optional<BigDecimal> firstNumber(Document doc, List<SelectorSpec> specs, HostRule rule, boolean selling) {
         for (SelectorSpec spec : specs) {
             for (Element el : select(doc, spec, rule)) {
-                Optional<BigDecimal> parsed = PriceParser.parse(valueOf(el, spec));
+                boolean amazon = "amazon.in".equals(rule.host());
+                if (amazon && selling && isNonSellingPrice(el)) continue;
+                Optional<BigDecimal> parsed = amazon
+                        ? PriceParser.parseAmount(spec.usesAttribute() ? el.attr(spec.attribute()) : el.wholeText())
+                        : PriceParser.parse(valueOf(el, spec));
                 if (parsed.isPresent()) {
                     return parsed;
                 }
@@ -75,10 +79,23 @@ public class CssRuleExtractor implements PriceExtractor {
         return Optional.empty();
     }
 
+    private static boolean isNonSellingPrice(Element element) {
+        for (Element el = element; el != null; el = el.parent()) {
+            if (el.hasClass("a-text-price") || el.hasAttr("hidden")
+                    || "true".equals(el.attr("aria-hidden"))) return true;
+            String identity = (el.id() + " " + el.className()).toLowerCase(java.util.Locale.ROOT);
+            if (identity.matches(".*(emi|installment|monthly|coupon|delivery|recommend|sponsored|carousel).*")) return true;
+            if (el.text().length() < 160 && el.text().toLowerCase(java.util.Locale.ROOT)
+                    .matches(".*(\\bemi\\b|per month|/month|installment|bank offer).*")) return true;
+            if (el.id().startsWith("corePrice") || "apex_desktop".equals(el.id())) break;
+        }
+        return false;
+    }
+
     private static Optional<String> firstText(Document doc, List<SelectorSpec> specs, HostRule rule) {
         for (SelectorSpec spec : specs) {
             for (Element el : select(doc, spec, rule)) {
-                String value = valueOf(el, spec);
+                String value = spec.usesAttribute() ? el.attr(spec.attribute()) : el.text();
                 if (value != null && !value.isBlank()) {
                     return Optional.of(value);
                 }

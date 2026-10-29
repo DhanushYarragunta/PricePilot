@@ -65,6 +65,23 @@ public final class PriceParser {
     /** A candidate scoring below this is rejected outright rather than returned. */
     private static final int SCORE_FLOOR = -40;
 
+    /** For an explicitly identified amount, never search prose for a plausible number. */
+    public static Optional<BigDecimal> parseAmount(String text) {
+        if (text == null) return Optional.empty();
+        String value = normalise(text).replaceFirst("(?i)^(?:₹|INR|Rs\\.?)\\s*", "")
+                .replaceFirst("(?i)\\s*INR$", "").trim();
+        if (!value.matches("(?:[0-9]+|[0-9]{1,3}(?:,[0-9]{3})+|[0-9]{1,2}(?:,[0-9]{2})*,[0-9]{3})(?:\\.[0-9]{1,2})?")) {
+            return Optional.empty();
+        }
+        BigDecimal amount = toDecimal(value);
+        return isPlausible(amount) ? Optional.of(amount) : Optional.empty();
+    }
+
+    public static boolean isPlausible(BigDecimal value) {
+        return value != null && value.compareTo(MIN_PLAUSIBLE) >= 0
+                && value.compareTo(MAX_PLAUSIBLE) <= 0 && value.stripTrailingZeros().scale() <= 2;
+    }
+
     /**
      * @param text raw text or attribute value from the page
      * @return the amount, or empty when nothing in the string looks like a price

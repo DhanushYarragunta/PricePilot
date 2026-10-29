@@ -26,6 +26,14 @@ public record ProductSnapshot(
         boolean inStock,
         String strategy) {
 
+    /** Shared gate before an extraction can become append-only price history. */
+    public boolean isVerified() {
+        return PriceParser.isPlausible(price)
+                && (mrp == null || (PriceParser.isPlausible(mrp) && mrp.compareTo(price) >= 0))
+                && "INR".equals(currency)
+                && title != null && title.trim().length() >= 3 && title.length() <= 500;
+    }
+
     /** True when the page claims a discount: an MRP strictly above the selling price. */
     public boolean claimsDiscount() {
         return mrp != null && price != null && mrp.compareTo(price) > 0;
