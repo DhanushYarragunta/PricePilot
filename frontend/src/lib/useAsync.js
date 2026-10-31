@@ -108,7 +108,7 @@ export function useAsync(loader, deps = [], { enabled = true } = {}) {
  * person, runs once, and its failure belongs next to the button that caused it rather than in place
  * of the page. It also has to be impossible to fire twice, since the three actions this wraps all
  * cost money — a double-submitted refresh is two sets of requests to a retailer, and a
- * double-submitted analysis is twice the Claude tokens.
+ * double-submitted analysis is twice the AI tokens.
  */
 export function useAction(action) {
   const [busy, setBusy] = useState(false);

@@ -56,7 +56,26 @@ public record RefreshResult(
         String strategy,
         int latencyMs,
         boolean paid,
-        String message) {
+        String message,
+        Instant completedAt) {
+
+    /** Existing callers do not imply a known transaction completion time. */
+    public RefreshResult(Long listingId, Long productId, ScrapeOutcome outcome, String retailer,
+                         BigDecimal price, BigDecimal previousPrice, BigDecimal mrp, boolean inStock,
+                         boolean cameBackInStock, boolean priceChanged, boolean allTimeLow,
+                         Instant nextCheckAt, int intervalMinutes, String strategy, int latencyMs,
+                         boolean paid, String message) {
+        this(listingId, productId, outcome, retailer, price, previousPrice, mrp, inStock,
+                cameBackInStock, priceChanged, allTimeLow, nextCheckAt, intervalMinutes,
+                strategy, latencyMs, paid, message, null);
+    }
+
+    /** Added only after the persistence transaction returns, before optional mail/AI work. */
+    public RefreshResult withCompletedAt(Instant at) {
+        return new RefreshResult(listingId, productId, outcome, retailer, price, previousPrice, mrp,
+                inStock, cameBackInStock, priceChanged, allTimeLow, nextCheckAt, intervalMinutes,
+                strategy, latencyMs, paid, message, at);
+    }
 
     public boolean isSuccess() {
         return outcome == ScrapeOutcome.SUCCESS;
@@ -66,9 +85,9 @@ public record RefreshResult(
         return outcome == ScrapeOutcome.SKIPPED_FRESH;
     }
 
-    /** True when a network request was actually spent on this refresh. */
+    /** BrowserAct submissions are explicit; cached successes and pre-submission failures cost none. */
     public boolean consumedRequest() {
-        return outcome != null && outcome.consumedRequest();
+        return paid;
     }
 
     /** How far the price fell, or {@code null} when it did not fall. */

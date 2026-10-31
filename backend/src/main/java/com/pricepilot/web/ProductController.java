@@ -8,6 +8,7 @@ import com.pricepilot.schedule.RefreshResult;
 import com.pricepilot.security.AuthenticatedUser;
 import com.pricepilot.service.AccountService;
 import com.pricepilot.service.DashboardService;
+import com.pricepilot.service.ManualRefreshJobs;
 import com.pricepilot.service.ProductTrackingService;
 import com.pricepilot.service.SiblingDiscoveryService;
 import com.pricepilot.web.dto.ApiRequests;
@@ -23,7 +24,6 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -72,6 +72,7 @@ public class ProductController {
     private final SiblingDiscoveryService discovery;
     private final RateLimiter limiter;
     private final AppProperties props;
+    private final ManualRefreshJobs refreshJobs;
 
     public ProductController(ProductTrackingService tracking,
                              DashboardService dashboard,
@@ -79,7 +80,8 @@ public class ProductController {
                              DealAnalyzer analyzer,
                              SiblingDiscoveryService discovery,
                              RateLimiter limiter,
-                             AppProperties props) {
+                             AppProperties props,
+                             ManualRefreshJobs refreshJobs) {
         this.tracking = tracking;
         this.dashboard = dashboard;
         this.accounts = accounts;
@@ -87,6 +89,7 @@ public class ProductController {
         this.discovery = discovery;
         this.limiter = limiter;
         this.props = props;
+        this.refreshJobs = refreshJobs;
     }
 
     // ------------------------------------------------------------------ reading
@@ -161,41 +164,25 @@ public class ProductController {
 
     // ------------------------------------------------------------------ work on demand
 
-    /**
-     * Checks every active listing of this product right now.
-     *
-     * <p>The button that makes the whole app feel real: prices on screen change while you watch,
-     * because they are being read off the retailers' pages during the request. Counted against the
-     * same hourly allowance as adding a product, since both do the same thing to the same hosts.
-     */
+    /** Starts or joins a bounded background job; the web request never waits for retailer checks. */
     @PostMapping("/{productId}/refresh")
-    public ApiViews.RefreshSummary refresh(@AuthenticationPrincipal AuthenticatedUser caller,
-                                           @PathVariable Long productId) {
+    @ResponseStatus(HttpStatus.ACCEPTED)
+    public ApiViews.RefreshJob refresh(@AuthenticationPrincipal AuthenticatedUser caller,
+                                       @PathVariable Long productId) {
         int limit = props.getLimits().getManualRefreshPerHour();
         tracking.requireTracking(caller.id(), productId);
         limiter.check(caller.id(), REFRESH_ACTION, limit);
 
-        List<RefreshResult> results = tracking.refreshNow(productId);
-        List<ApiViews.RefreshReport> reports = new ArrayList<>(results.size());
-        int succeeded = 0;
-        int requests = 0;
-        for (RefreshResult result : results) {
-            reports.add(reportView(result));
-            if (result.isSuccess()) {
-                succeeded++;
-            }
-            if (result.consumedRequest()) {
-                requests++;
-            }
-        }
-        return new ApiViews.RefreshSummary(
-                productId,
-                results.size(),
-                succeeded,
-                requests,
-                limiter.remaining(caller.id(), REFRESH_ACTION, limit),
-                reports,
-                refreshMessage(results.size(), succeeded, requests));
+        return jobView(refreshJobs.start(productId), limiter.remaining(caller.id(), REFRESH_ACTION, limit));
+    }
+
+    /** Ownership is checked again on every poll, including after a user stops tracking a product. */
+    @GetMapping("/{productId}/refresh/{jobId}")
+    public ApiViews.RefreshJob refreshStatus(@AuthenticationPrincipal AuthenticatedUser caller,
+                                             @PathVariable Long productId, @PathVariable String jobId) {
+        tracking.requireTracking(caller.id(), productId);
+        return jobView(refreshJobs.status(productId, jobId),
+                limiter.remaining(caller.id(), REFRESH_ACTION, props.getLimits().getManualRefreshPerHour()));
     }
 
     /**
@@ -247,6 +234,13 @@ public class ProductController {
 
     // ------------------------------------------------------------------ mapping
 
+    private static ApiViews.RefreshJob jobView(ManualRefreshJobs.Snapshot job, int remaining) {
+        return new ApiViews.RefreshJob(job.jobId(), job.productId(), job.status().name(), job.terminal(),
+                job.total(), job.checked(), job.succeeded(), job.skipped(), job.failed(), job.requestsMade(),
+                remaining, job.results().stream().map(ProductController::reportView).toList(), job.createdAt(),
+                job.startedAt(), job.completedAt(), job.expiresAt(), job.message());
+    }
+
     private static ApiViews.Added addedView(ProductTrackingService.Added added) {
         return new ApiViews.Added(
                 added.productId(),
@@ -272,31 +266,6 @@ public class ProductController {
                 result.allTimeLow(),
                 result.nextCheckAt(),
                 result.message());
-    }
-
-    /**
-     * One sentence summarising a refresh, written to be shown as a toast.
-     *
-     * <p>Distinguishes "checked but served from the freshness window" from "checked over the network",
-     * because a refresh that spent no requests still did its job and saying "nothing happened" would
-     * be wrong. The freshness window exists precisely so that two people pressing refresh within a
-     * minute of each other do not produce two requests to the same retailer.
-     */
-    private static String refreshMessage(int checked, int succeeded, int requests) {
-        if (checked == 0) {
-            return "There was nothing to check.";
-        }
-        if (requests == 0) {
-            return "Every price was checked moments ago, so the current figures were reused.";
-        }
-        if (succeeded == 0) {
-            return "None of the retailers could be read this time. The reasons are listed above, and "
-                   + "scheduled checks will keep trying.";
-        }
-        if (succeeded == checked) {
-            return "Checked " + checked + " retailer" + (checked == 1 ? "" : "s") + " just now.";
-        }
-        return succeeded + " of " + checked + " retailers could be read just now.";
     }
 
     /**

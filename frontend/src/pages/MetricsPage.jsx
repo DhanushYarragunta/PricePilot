@@ -3,23 +3,15 @@ import { api } from '../lib/api.js';
 import { useAsync } from '../lib/useAsync.js';
 import Working from '../components/Working.jsx';
 import Notice, { ErrorNotice } from '../components/Notice.jsx';
-import { formatInteger, formatPercent, formatRate } from '../lib/money.js';
+import { formatInteger, formatPercent, formatRate, formatUsdEstimate, summarizeSpend } from '../lib/money.js';
 import { formatAbsolute, formatInterval, formatLatency, formatRelative } from '../lib/time.js';
+import { summarizeScraping } from '../lib/scrapeMetrics.js';
 
 const WINDOWS = [7, 30, 90];
 
 /**
- * The page that makes the claims checkable.
- *
- * Deliberately public and unauthenticated. Three numbers on a résumé — how many prices were judged
- * good value, how often an extraction succeeded, how much the adaptive schedule cut the request
- * volume — are assertions until someone can open a URL and see them computed from the rows that
- * produced them. Every figure here is recomputed on request by OpsMetricsService; none of them is
- * stored, and none of them is rounded in a flattering direction.
- *
- * The denominators are printed next to the percentages for the same reason. A success rate is
- * meaningless without knowing what counted as an attempt, and the most common way these numbers get
- * inflated is by quietly excluding the attempts that failed.
+ * Public aggregate telemetry with explicit windows and denominators. Process counters describe
+ * actual BrowserAct submissions; historical database check rows remain labeled separately.
  */
 export default function MetricsPage() {
   const [windowDays, setWindowDays] = useState(30);
@@ -33,8 +25,8 @@ export default function MetricsPage() {
           <div>
             <h1>How this is actually performing</h1>
             <p className="page-sub">
-              Every number on this page is computed from the database when you load it. Nothing is
-              cached, hard-coded or hand-written. If a figure looks poor, it is poor.
+              Verified price updates, shared requests and scheduling results. Each section states
+              its measurement window and what its counters include.
             </p>
           </div>
           <div className="stack">
@@ -71,6 +63,7 @@ export default function MetricsPage() {
             Measured over the {m.windowDays} days ending {formatAbsolute(m.generatedAt)}.
           </p>
 
+          {m.optimization ? <Optimization metrics={m.optimization} /> : null}
           <Extraction m={m} />
           <Load m={m} />
           {m.verdicts.analysed > 0 ? <VerdictBreakdown m={m} /> : null}
@@ -90,20 +83,20 @@ export default function MetricsPage() {
  * percentage is the claim and the basis is the receipt.
  */
 function Headlines({ m }) {
+  const current = summarizeScraping(m.optimization);
   return (
     <div className="metric-grid">
       <div className="headline-metric">
         <div className="headline-metric-value">
-          {m.extraction.networkRequests === 0
+          {current?.successPercent == null
             ? '—'
-            : formatPercent(m.extraction.successRatePercent, { sign: false })}
+            : formatPercent(current.successPercent, { sign: false })}
         </div>
-        <div className="headline-metric-label">of page reads returned a price</div>
+        <div className="headline-metric-label">of completed BrowserAct checks verified a price</div>
         <p className="headline-metric-basis">
-          {formatInteger(m.extraction.successes)} successes from{' '}
-          {formatInteger(m.extraction.networkRequests)} requests that actually went out over the
-          network. Requests skipped because a recent price was already on file are excluded from both
-          halves — counting them as successes is the easiest way to manufacture a high number here.
+          {formatInteger(m.optimization?.successfulRequests || 0)} verified results from{' '}
+          {formatInteger(current?.completed || 0)} completed workflows since this backend started.
+          Cache hits, joined requests and pending workflows are excluded.
         </p>
       </div>
 
@@ -116,25 +109,73 @@ function Headlines({ m }) {
         <div className="headline-metric-label">of prices judged good value</div>
         <p className="headline-metric-basis">
           {formatInteger(m.verdicts.favourable)} favourable out of{' '}
-          {formatInteger(m.verdicts.analysed)} analyses by Claude. A verdict counts as favourable
+          {formatInteger(m.verdicts.analysed)} AI analyses. A verdict counts as favourable
           only if the model returned good value or better — the server decides that, not this page.
         </p>
       </div>
 
       <div className="headline-metric">
         <div className="headline-metric-value">
-          {m.load.actualRequestsPerDay === 0
+          {current?.onTimePercent == null
             ? '—'
-            : formatPercent(m.load.loadReductionPercent, { sign: false })}
+            : formatPercent(current.onTimePercent, { sign: false })}
         </div>
-        <div className="headline-metric-label">less scraping than fixed hourly checks</div>
+        <div className="headline-metric-label">of observed due checks completed on time</div>
         <p className="headline-metric-basis">
-          {formatRate(m.load.actualRequestsPerDay)} a day against{' '}
-          {formatRate(m.load.baselineRequestsPerDay)} if every listing were checked every{' '}
-          {formatInterval(m.load.baselineIntervalMinutes)}, which is the baseline this replaced.
+          {formatInteger(m.optimization?.scheduledChecksCompletedOnTime || 0)} on-time completions from{' '}
+          {formatInteger(m.optimization?.scheduledChecksDue || 0)} distinct due checks observed since
+          this backend started. Pending, failed and late checks remain in the denominator.
         </p>
       </div>
     </div>
+  );
+}
+
+function Optimization({ metrics }) {
+  const summary = summarizeScraping(metrics);
+  const counters = [
+    ['BrowserAct submissions', metrics.retailerRequests],
+    ['BrowserAct API calls, including polls', metrics.browserActApiCalls],
+    ['Fresh cache hits', metrics.cacheHits],
+    ['Requests sharing work in progress', metrics.duplicateRequestsSkipped],
+    ['Failed submitted workflows', metrics.failedRequests],
+    ['Submitted workflows still pending', summary.pending],
+    ['Scheduled checks completed', metrics.scheduledChecksCompleted],
+    ['Scheduled checks without a fresh result', metrics.scheduledChecksFailed],
+    ['Due backlog at last scheduler scan', metrics.dueBacklog],
+    ['Backlog past its deadline', metrics.overdueBacklog],
+    ['Queue submissions deferred', metrics.scheduledChecksRejected],
+  ];
+  return (
+    <section className="panel" style={{ marginBottom: 'var(--s-5)' }}>
+      <header className="panel-head"><h2 className="panel-title">Shared checks and freshness</h2></header>
+      <div className="panel-body stack">
+        <p className="small muted">
+          Counters since {formatAbsolute(metrics.since)}. They reset when this backend restarts;
+          the history window above does not change them. One submission starts a BrowserAct workflow.
+          Its internal requests to a retailer cannot be measured here. Polling is counted separately.
+        </p>
+        <div className="stats">
+          {counters.map(([label, value]) => (
+            <div className="stat" key={label}>
+              <div className="stat-label">{label}</div>
+              <div className="stat-value">{formatInteger(value)}</div>
+            </div>
+          ))}
+        </div>
+        <p className="small muted">
+          A due check counts as completed only when a verified observation is recorded at or after
+          its scheduled time. On-time completion also meets the configured deadline (five minutes
+          after the due time by default). Failures keep the previous price and its timestamp.
+          On-time percentages are provisional while checks are pending. Requests queued more than
+          once can increase the queue counter without increasing the number of distinct due checks.
+        </p>
+        <p className="small muted">
+          Request reduction requires two controlled runs with the same products, schedule and traffic.
+          No measured before-and-after saving is claimed by these counters alone.
+        </p>
+      </div>
+    </section>
   );
 }
 
@@ -143,22 +184,16 @@ function Extraction({ m }) {
   return (
     <section className="panel" style={{ marginBottom: 'var(--s-5)' }}>
       <header className="panel-head">
-        <h2 className="panel-title">How prices get read</h2>
+        <h2 className="panel-title">Recorded check history</h2>
         <span className="small muted">
           average {formatLatency(m.extraction.averageLatencyMs)} per request
         </span>
       </header>
       <div className="panel-body">
         <p className="small muted" style={{ marginBottom: 'var(--s-4)' }}>
-          {/*
-           * The order is the actual runtime order of the chain, and saying so is the point: the
-           * cheap structured sources are tried first and the brittle per-site selectors last, which
-           * is why a retailer redesigning its markup usually costs nothing.
-           */}
-          Each page is tried against a chain of strategies in order — structured product data first,
-          then page metadata, then embedded JSON, then selectors written for that specific retailer.
-          The first one that yields a plausible price wins, so the rows near the top of this table
-          doing most of the work is the design functioning as intended.
+          BrowserAct is the only live price provider. Historical rows may include older strategies
+          and failures before a workflow was submitted. These are recorded checks, not a count of
+          outbound retailer requests. The current-run counters above measure actual submissions.
         </p>
       </div>
       <div className="panel-body panel-body-flush">
@@ -211,15 +246,14 @@ function Load({ m }) {
   return (
     <section className="panel" style={{ marginBottom: 'var(--s-5)' }}>
       <header className="panel-head">
-        <h2 className="panel-title">Request volume</h2>
+        <h2 className="panel-title">Schedule and historical check volume</h2>
       </header>
       <div className="panel-body stack">
         <p className="small muted">
-          Checking everything hourly is the obvious design and it is wasteful: most products sit at
-          the same price for weeks. Each listing here carries its own interval, which stretches by
-          about 60% each time a check finds no change and collapses when a price moves. A product in
-          the middle of a sale gets watched closely; a wall mount nobody has repriced since March
-          gets looked at once a day.
+          Each shared retailer listing has one adaptive check interval. Unchanged prices can lengthen
+          it; price changes and alert requirements can shorten it. Page visits read stored observations
+          without starting a scrape. The hourly figure below is an estimate for today's active listings,
+          not a measured baseline from an earlier version.
         </p>
 
         <div className="stats">
@@ -232,18 +266,18 @@ function Load({ m }) {
             </div>
           </div>
           <div className="stat">
-            <div className="stat-label">Requests a day</div>
+            <div className="stat-label">Recorded checks a day</div>
             <div className="stat-value">{formatRate(m.load.actualRequestsPerDay)}</div>
             <div className="stat-note">
-              hourly checks would be {formatRate(m.load.baselineRequestsPerDay)}
+              estimated hourly checks: {formatRate(m.load.baselineRequestsPerDay)}
             </div>
           </div>
           <div className="stat">
-            <div className="stat-label">Saved by sharing</div>
+            <div className="stat-label">Recorded freshness skips</div>
             <div className="stat-value">{formatInteger(m.load.dedupedRequests)}</div>
             <div className="stat-note">
-              {formatPercent(m.load.dedupSharePercent, { sign: false })} of requests avoided because
-              two people track the same URL
+              {formatPercent(m.load.dedupSharePercent, { sign: false })} of recorded checks reused
+              an observation; these do not measure concurrent deduplication
             </div>
           </div>
         </div>
@@ -256,11 +290,9 @@ function Load({ m }) {
          * make every other figure here suspect too.
          */}
         {negative ? (
-          <Notice tone="info" title="This is currently negative.">
-            Intervals begin at the baseline and only widen after checks come back unchanged, and
-            manual checks count too. On a young deployment, or just after someone has pressed Check
-            prices now a few times, the adaptive schedule really is making more requests than a fixed
-            hourly one would. It crosses over once listings have had a few quiet cycles.
+          <Notice tone="info" title="Recorded checks exceed the hourly estimate.">
+            Manual checks and failures before submission are included in these historical rows.
+            This estimate uses today's listing count and cannot establish actual request savings.
           </Notice>
         ) : null}
       </div>
@@ -268,7 +300,7 @@ function Load({ m }) {
   );
 }
 
-/** What Claude concluded, including the discounts it called fake. */
+/** What the AI concluded, including the discounts it called fake. */
 function VerdictBreakdown({ m }) {
   return (
     <section className="panel" style={{ marginBottom: 'var(--s-5)' }}>
@@ -311,7 +343,7 @@ function VerdictBreakdown({ m }) {
            */}
           <strong>{formatInteger(m.verdicts.fakeDiscountsFound)}</strong> of those analyses found a
           discount that does not hold up — a listed price the product has never actually sold at
-          within the recorded history, which is what makes a 62% off badge meaningless. Claude is
+          within the recorded history, which is what makes a 62% off badge meaningless. The AI is
           given the price series rather than just the current figure, which is the only way that
           judgement can be made.
         </p>
@@ -482,13 +514,13 @@ function Spend({ m }) {
   if (!m.spend || m.spend.length === 0) {
     return null;
   }
-  const total = m.spend.reduce((sum, row) => sum + Number(row.costUsd || 0), 0);
+  const estimate = summarizeSpend(m.spend);
 
   return (
     <section className="panel">
       <header className="panel-head">
         <h2 className="panel-title">What the APIs cost</h2>
-        <span className="small muted">${total.toFixed(2)} over {m.windowDays} days</span>
+        <span className="small muted">Recorded estimate: {formatUsdEstimate(estimate.total, 2)} over {m.windowDays} days</span>
       </header>
       <div className="panel-body panel-body-flush">
         <div className="table-scroll">
@@ -499,7 +531,7 @@ function Spend({ m }) {
                 <th className="table-num">Calls</th>
                 <th className="table-num">Input tokens</th>
                 <th className="table-num">Output tokens</th>
-                <th className="table-num">Cost</th>
+                <th className="table-num">Estimated cost</th>
               </tr>
             </thead>
             <tbody>
@@ -509,7 +541,7 @@ function Spend({ m }) {
                   <td className="table-num">{formatInteger(row.calls)}</td>
                   <td className="table-num">{formatInteger(row.inputTokens)}</td>
                   <td className="table-num">{formatInteger(row.outputTokens)}</td>
-                  <td className="table-num">${Number(row.costUsd || 0).toFixed(4)}</td>
+                  <td className="table-num">{formatUsdEstimate(row.costUsd)}</td>
                 </tr>
               ))}
             </tbody>
@@ -518,14 +550,8 @@ function Spend({ m }) {
       </div>
       <div className="panel-body">
         <p className="small muted">
-          {/*
-           * Tracked per call from the start, because the alternative is discovering the number on a
-           * credit-card statement. It is also the figure that justified the adaptive scheduler: the
-           * saving in the third headline metric above is money, not just politeness.
-           */}
-          Recorded per call as the application makes them, not read from a billing dashboard. Token
-          counts come back in each API response, and the rates are configured on the server, so this
-          is what the usage cost at the prices in force.
+          Estimates use recorded usage and the rates configured on the server. Your provider&apos;s billing dashboard shows the actual charges.
+          {estimate.hasUnknown ? ' The total excludes providers whose costs have not been estimated; those calls may still incur charges.' : ''}
         </p>
       </div>
     </section>

@@ -1,7 +1,7 @@
 package com.pricepilot.ai;
 
 /**
- * Something went wrong talking to Claude.
+ * Something went wrong talking to the configured AI provider.
  *
  * <p>Separate from the scraping exceptions because the consequences are different. A scraping
  * failure means a price is missing, which is the core of the product. An AI failure means a verdict

@@ -155,6 +155,7 @@ public class AlertWriter {
     @Transactional
     public void markFailed(Long alertLogId, String error) {
         alerts.findById(alertLogId).ifPresent(alert -> {
+            if (alert.isDelivered()) return;
             alert.setDelivered(false);
             alert.setDeliveryError(cap(error, ERROR_LIMIT));
         });

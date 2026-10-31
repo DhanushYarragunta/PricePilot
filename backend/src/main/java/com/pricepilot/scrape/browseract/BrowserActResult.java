@@ -3,7 +3,7 @@ package com.pricepilot.scrape.browseract;
 import java.math.BigDecimal;
 
 /**
- * What BrowserAct's Amazon.in Bot told us about one product.
+ * Validated product data from a configured BrowserAct retailer workflow.
  *
  * <p>This is an intermediate representation between the raw API response and the
  * {@link com.pricepilot.scrape.ProductSnapshot} that the rest of the pipeline works with.
@@ -16,7 +16,7 @@ import java.math.BigDecimal;
  * @param mrp          the struck-through "was" price, or null if no discount is shown
  * @param currency     explicitly verified INR currency code
  * @param inStock      whether the product can be purchased
- * @param asin         Amazon Standard Identification Number, if extracted
+ * @param asin         verified Amazon Standard Identification Number; null for other retailers
  * @param imageUrl     URL of the main product image, if extracted
  * @param status       extraction status reported by BrowserAct (e.g. "success")
  */

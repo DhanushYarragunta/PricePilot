@@ -295,6 +295,27 @@ public final class ApiViews {
             String message) {
     }
 
+    /** Process-local background work; terminal state never implies that every retailer succeeded. */
+    public record RefreshJob(
+            String jobId,
+            Long productId,
+            String status,
+            boolean terminal,
+            int total,
+            int checked,
+            int succeeded,
+            int skipped,
+            int failed,
+            int requestsMade,
+            int refreshRemaining,
+            List<RefreshReport> results,
+            Instant createdAt,
+            Instant startedAt,
+            Instant completedAt,
+            Instant expiresAt,
+            String message) {
+    }
+
     /**
      * The outcome of looking for a product at other retailers.
      *
@@ -332,7 +353,8 @@ public final class ApiViews {
             int maxTrackedProducts,
             int maxRetailersPerProduct,
             int manualRefreshPerHour,
-            int historyWindowDays) {
+            int historyWindowDays,
+            boolean schedulerEnabled) {
     }
 
     // ------------------------------------------------------------------ enum labelling

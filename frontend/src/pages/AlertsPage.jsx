@@ -1,7 +1,7 @@
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../lib/api.js';
-import { useAsync } from '../lib/useAsync.js';
-import { useCapabilities } from '../lib/capabilities.jsx';
+import { useAsync, useAction } from '../lib/useAsync.js';
 import Money from '../components/Money.jsx';
 import Working from '../components/Working.jsx';
 import EmptyState from '../components/EmptyState.jsx';
@@ -19,8 +19,11 @@ const LIMIT = 100;
  * not a table with a page control.
  */
 export default function AlertsPage() {
-  const caps = useCapabilities();
   const alerts = useAsync((options) => api.alerts(LIMIT, options), []);
+
+  const mail = useAsync((options) => api.mailStatus(options), []);
+  const test = useAction(() => api.testEmail());
+  const [testResult, setTestResult] = useState(null);
 
   const groups = alerts.data ? groupByDay(alerts.data) : [];
 
@@ -42,13 +45,17 @@ export default function AlertsPage() {
         </div>
       </header>
 
-      {caps.emailEnabled ? null : (
-        <Notice tone="info" title="Email is not configured on this deployment.">
-          Alerts are still raised and recorded here — this page is the full record — but nothing is
-          sent to your inbox. Setting <span className="machine">MAIL_HOST</span> on the server turns
-          delivery on.
-        </Notice>
-      )}
+      <section className="panel advisor-panel">
+        <header className="panel-head"><h2 className="panel-title">Email delivery</h2></header>
+        <div className="panel-body stack">
+          <p>{mail.data?.message || 'Check delivery to the email address saved on your signed-in account.'}</p>
+          {mail.data?.schedulerEnabled === false && <Notice tone="info" title="Automatic checks are disabled locally.">Price checks and buying-plan reassessments run when you request them. Automatic price alerts require background checks to be enabled.</Notice>}
+          <div><button type="button" className="btn btn-ghost" disabled={test.busy} onClick={() => test.run().then(setTestResult).catch(() => {})}>{test.busy ? 'Testing email delivery…' : 'Send one test email to my account'}</button></div>
+          {testResult && <Notice tone="info" title={testResult.accepted ? 'Mail server accepted the test message.' : 'Test email was not accepted.'}>{testResult.message}</Notice>}
+          <ErrorNotice error={test.error || mail.error} what="Email could not be checked" />
+          <p className="small muted">A mail server accepting a message does not guarantee inbox delivery. Check Spam and Promotions too.</p>
+        </div>
+      </section>
 
       <ErrorNotice
         error={alerts.error}
@@ -69,7 +76,7 @@ export default function AlertsPage() {
         >
           An alert is raised when a price reaches the target you set, when a product hits the lowest
           price we have ever recorded for it, when it comes back into stock, or — if the analysis is
-          switched on — when Claude decides a price has become genuinely good. Nothing here means
+          switched on — when the AI decides a price has become genuinely good. Nothing here means
           nothing has happened yet, which is itself worth knowing.
         </EmptyState>
       ) : null}

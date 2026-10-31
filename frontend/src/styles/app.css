@@ -1481,3 +1481,164 @@
 .admin-id-input {
   width: 7rem;
 }
+
+/* ═══════════════════════════════════════════════════════ shopping assistant */
+
+.shopping-assistant {
+  margin: var(--s-5) 0;
+  scroll-margin-top: var(--s-5);
+}
+
+.shopping-assistant .panel-head {
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.assistant-subtitle {
+  margin-top: var(--s-2);
+}
+
+.assistant-preferences {
+  min-width: 0;
+  padding: 0;
+  margin: 0;
+  border: 0;
+}
+
+.assistant-preferences:disabled {
+  opacity: 0.6;
+}
+
+.assistant-fields {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(12rem, 1fr);
+  align-items: start;
+  gap: var(--s-5);
+}
+
+.assistant-ideas,
+.assistant-submit {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-3);
+}
+
+.assistant-ideas {
+  margin-top: var(--s-3);
+}
+
+.assistant-conversation {
+  border-top: var(--line);
+}
+
+.assistant-turn {
+  padding: var(--s-5) 0;
+  border-bottom: var(--line);
+}
+
+.assistant-turn-user {
+  padding: var(--s-4);
+  background: var(--panel-sunk);
+}
+
+.assistant-speaker {
+  margin-bottom: var(--s-2);
+  font-size: var(--t-small);
+  font-weight: 700;
+}
+
+.assistant-answer {
+  max-width: 85ch;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.assistant-candidates {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr));
+  gap: var(--s-4);
+  margin-top: var(--s-5);
+}
+
+.assistant-candidate {
+  min-width: 0;
+  padding: var(--s-4);
+  border: var(--line);
+}
+
+.assistant-candidate-meta {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+  margin-bottom: var(--s-3);
+  font-size: var(--t-small);
+  color: var(--ink-soft);
+}
+
+.assistant-candidate-title {
+  font-size: var(--t-lead);
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.assistant-candidate-price {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--s-3);
+  margin-top: var(--s-4);
+  font-size: var(--t-h3);
+  font-weight: 600;
+}
+
+.assistant-candidate-reason,
+.assistant-model {
+  margin-top: var(--s-3);
+}
+
+.assistant-cautions {
+  margin-top: var(--s-3);
+  padding-left: var(--s-4);
+  list-style: disc;
+  font-size: var(--t-small);
+  color: var(--ink-soft);
+  overflow-wrap: anywhere;
+}
+
+.assistant-cautions > li + li {
+  margin-top: var(--s-1);
+}
+
+@media (max-width: 640px) {
+  .assistant-fields {
+    grid-template-columns: 1fr;
+    gap: var(--s-4);
+  }
+
+  .assistant-submit {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}
+
+/* Research and buying plans share the product page's typography and evidence styles. */
+.advisor-panel { margin-bottom: var(--s-6); }
+.advisor-fields, .advisor-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: var(--s-4); }
+.advisor-facts { margin: var(--s-4) 0; font-size: var(--t-small); }
+.advisor-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-3); }
+.advisor-decision { padding: var(--s-5); border-left: 3px solid var(--ink); background: var(--panel-sunk); }
+.advisor-decision h3 { margin: var(--s-2) 0; }
+.advisor-editor { padding-top: var(--s-4); }
+.advisor-fieldset { border: 0; padding: 0; margin: 0; display: grid; gap: var(--s-4); }
+.advisor-warning, .advisor-question { font-weight: 600; }
+.advisor-history, .advisor-forecast { padding: var(--s-4) 0; border-top: var(--line); }
+.advisor-chart { width: 100%; display: block; margin: var(--s-3) 0; }
+.research-sections { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr)); gap: var(--s-6); }
+.research-claims { padding: 0; list-style: none; }
+.research-claims > li { padding: var(--s-4) 0; border-bottom: var(--line); }
+.research-evidence { border-left: var(--line); padding-left: var(--s-3); margin: var(--s-3) 0; font-size: var(--t-small); color: var(--ink-soft); overflow-wrap: anywhere; }
+.research-sources { padding-left: var(--s-5); }
+.research-sources > li { margin: var(--s-4) 0; overflow-wrap: anywhere; }
+.advisor-panel summary { cursor: pointer; padding: var(--s-2) 0; font-weight: 600; }

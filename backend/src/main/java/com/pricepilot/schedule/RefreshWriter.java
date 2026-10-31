@@ -85,7 +85,7 @@ public class RefreshWriter {
                     result.host(), result.finalUrl(), result.httpStatus(), result.latencyMs(),
                     "Extraction failed validation; previous price preserved."), source);
         }
-        Listing listing = listings.findWithProductById(listingId).orElse(null);
+        Listing listing = listings.findWithProductByIdForUpdate(listingId).orElse(null);
         if (listing == null) {
             return RefreshResult.vanished(listingId);
         }
@@ -94,6 +94,26 @@ public class RefreshWriter {
         Long productId = listing.getProduct().getId();
 
         PricePoint previous = prices.findFirstByListingIdOrderByCapturedAtDesc(listingId).orElse(null);
+        Instant observedAt = result.observedAt() == null ? null
+                : result.observedAt().truncatedTo(java.time.temporal.ChronoUnit.MICROS);
+        if (observedAt == null || observedAt.isAfter(Instant.now())) {
+            return recordFailure(listingId, ScrapeResult.aborted(ScrapeOutcome.NO_PRICE,
+                    result.host(), result.finalUrl(), result.httpStatus(), result.latencyMs(),
+                    "Observation timestamp failed validation; previous price preserved."), source);
+        }
+        // Cache/shared results carry the source observation timestamp. Replaying that observation
+        // never creates another history point, renews freshness, adapts scheduling or sends alerts.
+        if (previous != null && previous.getCapturedAt() != null
+                && !observedAt.isAfter(previous.getCapturedAt())
+                || listing.getLastSuccessAt() != null && !observedAt.isAfter(listing.getLastSuccessAt())) {
+            return cachedResult(listing, previous, "Reused an observation already stored; no new price point was created");
+        }
+        if (listing.getLastCheckedAt() != null && listing.getLastCheckedAt().isAfter(observedAt)
+                && (listing.getLastSuccessAt() == null
+                    || listing.getLastCheckedAt().isAfter(listing.getLastSuccessAt()))) {
+            return cachedResult(listing, previous,
+                    "A later check failed; this older observation cannot replace its state");
+        }
         BigDecimal previousPrice = previous == null ? null : previous.getPrice();
         boolean priceChanged = previousPrice == null
                 || previousPrice.compareTo(snapshot.price()) != 0;
@@ -117,16 +137,15 @@ public class RefreshWriter {
         point.setInStock(snapshot.inStock());
         point.setSourceStrategy(cap(result.strategy(), STRATEGY_LIMIT));
         point.setChanged(priceChanged);
-        point.setCapturedAt(Instant.now());
+        point.setCapturedAt(observedAt);
         prices.save(point);
 
         boolean urgent = listings.hasUrgentTracker(productId);
         int interval = policy.afterSuccess(listing.getCheckIntervalMinutes(), priceChanged, urgent);
-        Instant nextCheck = policy.dueAfter(interval);
+        Instant nextCheck = policy.dueAfter(interval, observedAt);
 
-        Instant now = Instant.now();
-        listing.setLastCheckedAt(now);
-        listing.setLastSuccessAt(now);
+        listing.setLastCheckedAt(observedAt);
+        listing.setLastSuccessAt(observedAt);
         listing.setLastStrategy(cap(result.strategy(), STRATEGY_LIMIT));
         listing.setConsecutiveFailures(0);
         listing.setCheckIntervalMinutes(interval);
@@ -177,7 +196,7 @@ public class RefreshWriter {
      */
     @Transactional
     public RefreshResult recordFailure(Long listingId, ScrapeResult result, TriggerSource source) {
-        Listing listing = listings.findWithProductById(listingId).orElse(null);
+        Listing listing = listings.findWithProductByIdForUpdate(listingId).orElse(null);
         if (listing == null) {
             return RefreshResult.vanished(listingId);
         }
@@ -236,19 +255,34 @@ public class RefreshWriter {
      */
     @Transactional
     public RefreshResult recordSkip(Long listingId, ScrapeResult result, TriggerSource source) {
-        Listing listing = listings.findWithProductById(listingId).orElse(null);
+        Listing listing = listings.findWithProductByIdForUpdate(listingId).orElse(null);
         if (listing == null) {
             return RefreshResult.vanished(listingId);
         }
 
-        Instant nextCheck = policy.dueAfterSkip();
-        listing.setNextCheckAt(nextCheck);
+        // Page visits/manual cache hits do not change the schedule. An already-due cached check
+        // may only be moved to the fixed observation-based interval, never now + a rolling delay.
+        Instant nextCheck = listing.getNextCheckAt();
+        if (source == TriggerSource.SCHEDULER && nextCheck != null && !nextCheck.isAfter(Instant.now())
+                && listing.getLastSuccessAt() != null) {
+            Instant observationDue = listing.getLastSuccessAt()
+                    .plusSeconds(Math.max(1, listing.getCheckIntervalMinutes()) * 60L);
+            if (observationDue.isAfter(nextCheck)) {
+                nextCheck = observationDue;
+                listing.setNextCheckAt(nextCheck);
+            }
+        }
 
         saveAttempt(listing, result, source);
 
         PricePoint latest = prices.findFirstByListingIdOrderByCapturedAtDesc(listingId).orElse(null);
+        return cachedResult(listing, latest,
+                "Reused a price captured " + describeAge(latest) + " ago; no request was made");
+    }
+
+    private RefreshResult cachedResult(Listing listing, PricePoint latest, String message) {
         return new RefreshResult(
-                listingId,
+                listing.getId(),
                 listing.getProduct().getId(),
                 ScrapeOutcome.SKIPPED_FRESH,
                 listing.getRetailer(),
@@ -259,12 +293,12 @@ public class RefreshWriter {
                 false,
                 false,
                 false,
-                nextCheck,
+                listing.getNextCheckAt(),
                 listing.getCheckIntervalMinutes(),
                 "cache",
                 0,
                 false,
-                "Reused a price captured " + describeAge(latest) + " ago; no request was made");
+                message);
     }
 
     // ------------------------------------------------------------------ scheduling helpers

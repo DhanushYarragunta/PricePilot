@@ -20,7 +20,8 @@ spring:
     name: pricepilot
 
   lifecycle:
-    timeout-per-shutdown-phase: 25s
+    # Web requests and background jobs stop in separate phases. Docker allows both.
+    timeout-per-shutdown-phase: ${SHUTDOWN_TIMEOUT:420s}
 
   datasource:
     url: ${DB_URL:jdbc:postgresql://localhost:5432/pricepilot}
@@ -90,6 +91,7 @@ spring:
           auth: true
           starttls:
             enable: true
+            required: true
           connectiontimeout: 10000
           timeout: 10000
           writetimeout: 10000
@@ -107,6 +109,10 @@ spring:
       enabled: false
 
 management:
+  cloudwatch:
+    metrics:
+      export:
+        enabled: false
   endpoints:
     web:
       exposure:
@@ -137,15 +143,26 @@ pricepilot:
   public-url: ${APP_PUBLIC_URL:http://localhost:5173}
 
   # --------------------------------------------------------------------------
-  # Claude — the only LLM provider.
+  # AI — Anthropic or an OpenAI-compatible gateway such as AgentRouter.
   # --------------------------------------------------------------------------
   ai:
-    api-key: ${ANTHROPIC_API_KEY:}
-    model: ${ANTHROPIC_MODEL:claude-haiku-4-5}
-    base-url: ${ANTHROPIC_BASE_URL:https://api.anthropic.com}
+    provider: ${AI_PROVIDER:anthropic}
+    api-key: ${AI_API_KEY:}
+    model: ${AI_MODEL:}
+    base-url: ${AI_BASE_URL:}
+    anthropic-api-key: ${ANTHROPIC_API_KEY:}
+    anthropic-model: ${ANTHROPIC_MODEL:claude-haiku-4-5}
+    anthropic-base-url: ${ANTHROPIC_BASE_URL:https://api.anthropic.com}
     api-version: "2023-06-01"
-    max-tokens: 1200
-    timeout-ms: 45000
+    # Zero selects 4096 for compatible reasoning models or 1200 for Anthropic.
+    max-tokens: ${AI_MAX_TOKENS:0}
+    timeout-ms: ${AI_TIMEOUT_MS:45000}
+    reasoning-effort: ${AI_REASONING_EFFORT:low}
+    monthly-call-budget: ${AI_MONTHLY_CALL_BUDGET:100}
+    # Empty rates mean unknown cost, not free inference. The call cap still applies.
+    input-usd-per-million: ${AI_INPUT_USD_PER_MILLION:}
+    output-usd-per-million: ${AI_OUTPUT_USD_PER_MILLION:}
+    cached-input-usd-per-million: ${AI_CACHED_INPUT_USD_PER_MILLION:}
     monthly-budget-usd: ${AI_MONTHLY_BUDGET_USD:5.00}
     # Re-analysis is skipped if a fresh verdict exists and the price has not
     # moved by more than this fraction. Keeps spend proportional to signal.
@@ -162,6 +179,29 @@ pricepilot:
     monthly-call-budget: ${TAVILY_MONTHLY_CALL_BUDGET:500}
     max-results: 8
 
+  # Evidence research has its own per-report cap and shares the Tavily monthly budget.
+  research:
+    max-searches: ${RESEARCH_MAX_SEARCHES:6}
+    timeout-seconds: ${RESEARCH_TIMEOUT_SECONDS:65}
+    cache-hours: ${RESEARCH_CACHE_HOURS:24}
+    max-sources: ${RESEARCH_MAX_SOURCES:16}
+
+  # Planning reads stored observations; it never submits BrowserAct tasks.
+  planning:
+    minimum-forecast-observations: ${PLANNING_MIN_FORECAST_OBSERVATIONS:12}
+    minimum-forecast-days: ${PLANNING_MIN_FORECAST_DAYS:7}
+    maximum-forecast-days: ${PLANNING_MAX_FORECAST_DAYS:30}
+    stale-after-hours: ${PLANNING_STALE_AFTER_HOURS:24}
+    gap-after-hours: ${PLANNING_GAP_AFTER_HOURS:48}
+    reassess-after-hours: ${PLANNING_REASSESS_AFTER_HOURS:24}
+    deadline-risk-days: ${PLANNING_DEADLINE_RISK_DAYS:3}
+    minimum-expected-savings-percent: ${PLANNING_MIN_SAVINGS_PERCENT:3}
+    maximum-backtest-error-percent: ${PLANNING_MAX_BACKTEST_ERROR_PERCENT:15}
+    minimum-training-coverage-percent: ${PLANNING_MIN_COVERAGE_PERCENT:50}
+    scheduler-batch-size: ${PLANNING_SCHEDULER_BATCH_SIZE:20}
+    ai-timeout-seconds: ${PLANNING_AI_TIMEOUT_SECONDS:15}
+    zone-id: ${PLANNING_ZONE_ID:Asia/Kolkata}
+
   # --------------------------------------------------------------------------
   # Scraping engine
   # --------------------------------------------------------------------------
@@ -175,7 +215,9 @@ pricepilot:
     # A freshly scraped price younger than this is reused instead of refetched.
     # This is what makes several users watching one product cost one fetch.
     freshness-window-seconds: ${SCRAPE_FRESHNESS_SECONDS:900}
-    # Unblocker fallback
+    # Bounded, verified snapshots only; manual checks also enforce their shorter age limit.
+    cache-max-entries: ${SCRAPE_CACHE_MAX_ENTRIES:2000}
+    # Legacy settings retained for compatibility; ignored by price scraping.
     provider: ${SCRAPER_PROVIDER:none}
     provider-api-key: ${SCRAPER_API_KEY:}
     provider-monthly-call-budget: ${SCRAPER_MONTHLY_CALL_BUDGET:800}
@@ -194,6 +236,10 @@ pricepilot:
   # --------------------------------------------------------------------------
   scheduler:
     enabled: ${SCHEDULER_ENABLED:true}
+    # Shares the manual-job lifecycle phase; both drains run concurrently.
+    shutdown-grace-seconds: ${SCHEDULER_SHUTDOWN_GRACE_SECONDS:400}
+    # Completion deadline = scheduled due time + this fixed allowance.
+    freshness-grace-seconds: ${SCHEDULER_FRESHNESS_GRACE_SECONDS:300}
     # How often the dispatcher wakes up and asks "what is due?"
     tick-seconds: 120
     # Never fetch one listing more often than this.
@@ -220,19 +266,24 @@ pricepilot:
     # Nightly telemetry prune. JVM local time, which deploys set to UTC.
     cleanup-cron: "0 40 3 * * *"
 
+  # Manual HTTP requests enqueue bounded work and poll its status.
+  manual-refresh:
+    workers: ${MANUAL_REFRESH_WORKERS:1}
+    queue-capacity: ${MANUAL_REFRESH_QUEUE_CAPACITY:8}
+    max-jobs: ${MANUAL_REFRESH_MAX_JOBS:200}
+    retention-seconds: ${MANUAL_REFRESH_RETENTION_SECONDS:3600}
+    shutdown-grace-seconds: ${MANUAL_REFRESH_SHUTDOWN_GRACE_SECONDS:400}
+
   alerts:
     enabled: ${MAIL_ENABLED:false}
     from: ${MAIL_FROM:PricePilot <noreply@example.com>}
     # Do not email the same user about the same product more than once per N hours.
     cooldown-hours: 12
 
-  # --------------------------------------------------------------------------
-  # BrowserAct — headless browser extraction for anti-bot-protected retailers.
-  # Used for Amazon.in where direct HTTP fetches get CAPTCHAs. Each API call
-  # consumes credits, so this is only activated for hosts that need it.
-  # --------------------------------------------------------------------------
+  # BrowserAct is the only price-scraping provider. See README.md (BrowserAct workflow).
   browser-act:
     api-key: ${BROWSERACT_API_KEY:}
+    # The same trained workflow receives every retailer's product URL.
     workflow-id: ${BROWSERACT_WORKFLOW_ID:}
     timeout-ms: ${BROWSERACT_TIMEOUT_MS:90000}
     monthly-call-budget: ${BROWSERACT_MONTHLY_CALL_BUDGET:0}
@@ -270,4 +321,19 @@ logging:
     com.pricepilot: DEBUG
 pricepilot:
   scheduler:
-    enabled: false   # keep dev runs from hitting retailers unprompted
+    enabled: ${DEV_SCHEDULER_ENABLED:false}   # opt in explicitly for local automatic checks
+
+---
+# Default and dev startup must not resolve AWS credentials or create AWS clients.
+# Spring Cloud AWS 3.2.1 gates the exporter configuration on namespace presence,
+# so enabled=false alone is insufficient to prevent its async client creation.
+spring:
+  config:
+    activate:
+      on-profile: "!cloudwatch"
+  autoconfigure:
+    exclude:
+      - io.awspring.cloud.autoconfigure.core.AwsAutoConfiguration
+      - io.awspring.cloud.autoconfigure.core.CredentialsProviderAutoConfiguration
+      - io.awspring.cloud.autoconfigure.core.RegionProviderAutoConfiguration
+      - io.awspring.cloud.autoconfigure.metrics.CloudWatchExportAutoConfiguration

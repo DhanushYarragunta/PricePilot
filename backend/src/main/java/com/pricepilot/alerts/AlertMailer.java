@@ -3,16 +3,29 @@ package com.pricepilot.alerts;
 import com.pricepilot.config.AppProperties;
 import com.pricepilot.domain.AlertKind;
 import jakarta.mail.internet.MimeMessage;
+import jakarta.mail.internet.InternetAddress;
+import jakarta.mail.internet.AddressException;
+import jakarta.mail.AuthenticationFailedException;
+import jakarta.mail.MessagingException;
+import jakarta.mail.SendFailedException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.boot.autoconfigure.mail.MailProperties;
 import org.springframework.mail.javamail.JavaMailSender;
+import org.springframework.mail.MailAuthenticationException;
+import org.springframework.mail.MailSendException;
 import org.springframework.mail.javamail.MimeMessageHelper;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Component;
 
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.HashSet;
+import java.util.ArrayDeque;
+import java.util.Collections;
+import java.util.IdentityHashMap;
+import java.util.Set;
 
 /**
  * Sends alert emails, on a background thread, and never breaks anything by failing.
@@ -30,7 +43,7 @@ import java.util.List;
  * the same object does nothing at all.
  *
  * <p>Entirely optional. With {@code MAIL_ENABLED=false} or no SMTP credentials this reports itself
- * disabled at startup and quietly does nothing thereafter.
+ * disabled at startup. Undelivered alerts retain a safe explanation in the alert feed.
  */
 @Component
 public class AlertMailer {
@@ -40,14 +53,20 @@ public class AlertMailer {
     private final ObjectProvider<JavaMailSender> mailSender;
     private final AlertWriter writer;
     private final AppProperties props;
+    private final MailProperties smtp;
     private final boolean enabled;
+
+    /** Accepted means the SMTP server accepted the message, not confirmed inbox delivery. */
+    public record MailDeliveryResult(boolean accepted, String code, String message) { }
 
     public AlertMailer(ObjectProvider<JavaMailSender> mailSender,
                        AlertWriter writer,
-                       AppProperties props) {
+                       AppProperties props,
+                       MailProperties smtp) {
         this.mailSender = mailSender;
         this.writer = writer;
         this.props = props;
+        this.smtp = smtp;
         this.enabled = props.getAlerts().isEnabled();
 
         if (!enabled) {
@@ -57,7 +76,75 @@ public class AlertMailer {
     }
 
     public boolean isEnabled() {
-        return enabled && mailSender.getIfAvailable() != null;
+        return enabled && isConfigured();
+    }
+
+    public boolean isConfigured() {
+        return hasText(smtp.getHost()) && hasText(smtp.getUsername())
+                && hasText(smtp.getPassword()) && hasText(props.getAlerts().getFrom())
+                && mailSender.getIfAvailable() != null;
+    }
+
+    /** Called synchronously by an authenticated endpoint with the signed-in account's address. */
+    public MailDeliveryResult sendTestEmail(String recipient, String greeting) {
+        return sendPlainEmail(recipient, "[PricePilot test] Email delivery check",
+                "Hi " + greeting(greeting) + ",\n\nThis is the email delivery test you requested from PricePilot.\n"
+                        + "Your signed-in account receives alerts from the configured sender.\n"
+                        + "No price alert or price-history entry was created by this test.\n");
+    }
+
+    /**
+     * Sends a plan event after its owner and notification preferences are checked by the caller.
+     * The caller owns plan-event persistence and deduplication; this does not write price alerts.
+     */
+    public MailDeliveryResult sendPlanNotification(String recipient, String greeting, String planTitle,
+                                                   String summary, String planUrl) {
+        String title = shorten(planTitle == null ? "Your buying plan" : planTitle, 100).replace('\r', ' ').replace('\n', ' ');
+        String body = "Hi " + greeting(greeting) + ",\n\n"
+                + shorten(summary == null ? "Your buying plan was updated." : summary, 8000);
+        if (planUrl != null && !planUrl.isBlank()) {
+            try {
+                java.net.URI url = java.net.URI.create(planUrl);
+                if (url.getHost() != null && url.getUserInfo() == null
+                        && ("https".equalsIgnoreCase(url.getScheme()) || "http".equalsIgnoreCase(url.getScheme()))) {
+                    body += "\n\nView your buying plan: " + planUrl;
+                }
+            } catch (IllegalArgumentException ignored) { /* Omit invalid links. */ }
+        }
+        return sendPlainEmail(recipient, "[PricePilot] Buying plan update: " + title, body + "\n");
+    }
+
+    private static String greeting(String value) {
+        return shorten(value == null || value.isBlank() ? "there" : value, 80);
+    }
+
+    private MailDeliveryResult sendPlainEmail(String recipient, String subject, String body) {
+        try {
+            MailDeliveryResult unavailable = unavailable();
+            if (unavailable != null) return unavailable;
+            JavaMailSender sender = mailSender.getIfAvailable();
+            MimeMessage message = sender.createMimeMessage();
+            MimeMessageHelper helper = new MimeMessageHelper(message, false, StandardCharsets.UTF_8.name());
+            helper.setFrom(singleAddress(props.getAlerts().getFrom()));
+            helper.setTo(singleAddress(recipient));
+            helper.setSubject(subject);
+            helper.setText(body);
+            sender.send(message);
+            return new MailDeliveryResult(true, "smtp_accepted", "SMTP accepted the email. Check the inbox and spam folder.");
+        } catch (Exception failure) {
+            return classifyFailure(failure);
+        }
+    }
+
+    private MailDeliveryResult unavailable() {
+        if (!enabled) return new MailDeliveryResult(false, "mail_disabled", "Email delivery is disabled by MAIL_ENABLED.");
+        if (!isEnabled()) return new MailDeliveryResult(false, "mail_not_configured",
+                "Email delivery is not configured. Check MAIL_HOST, MAIL_USERNAME, MAIL_PASSWORD and MAIL_FROM.");
+        return null;
+    }
+
+    private static boolean hasText(String value) {
+        return value != null && !value.isBlank();
     }
 
     /**
@@ -72,42 +159,102 @@ public class AlertMailer {
         if (pending == null || pending.isEmpty()) {
             return;
         }
-        if (!isEnabled()) {
-            // Not an error, and not worth a row-level delivery_error either — the user chose not to
-            // configure email. The alerts remain in the feed.
-            log.debug("{} alert(s) recorded; email delivery is disabled", pending.size());
+        MailDeliveryResult unavailable = unavailable();
+        if (unavailable != null) {
+            pending.stream().filter(java.util.Objects::nonNull)
+                    .forEach(alert -> recordFailure(alert.alertLogId(), unavailable.message()));
             return;
         }
 
         JavaMailSender sender = mailSender.getIfAvailable();
+        Set<Long> processed = new HashSet<>();
         for (PendingAlert alert : pending) {
+            if (alert == null || !processed.add(alert.alertLogId())) continue;
             if (!alert.hasEmail()) {
-                writer.markFailed(alert.alertLogId(), "No email address on the account");
+                recordFailure(alert.alertLogId(), "No email address on the account.");
                 continue;
             }
             try {
                 sender.send(build(sender, alert));
-                writer.markDelivered(alert.alertLogId());
-                log.info("Delivered {} alert for product {} to {}",
-                        alert.kind(), alert.productId(), mask(alert.email()));
             } catch (Exception e) {
                 // Deliberately broad. JavaMail throws a wide and poorly-documented range of
                 // exceptions, and any of them means exactly one thing here: this email did not go
                 // out. Narrowing the catch would only let an unanticipated type escape onto a
                 // background thread where it would kill the rest of the batch.
-                log.error("Could not email the {} alert for product {} to {}: {}",
-                        alert.kind(), alert.productId(), mask(alert.email()), e.toString());
-                writer.markFailed(alert.alertLogId(), e.getClass().getSimpleName() + ": " + e.getMessage());
+                log.error("Could not email the {} alert for product {} to {} ({})",
+                        alert.kind(), alert.productId(), mask(alert.email()), e.getClass().getSimpleName());
+                recordFailure(alert.alertLogId(), classifyFailure(e).message());
+                continue;
+            }
+            try {
+                writer.markDelivered(alert.alertLogId());
+            } catch (RuntimeException e) {
+                // SMTP has already accepted the message. Do not mislabel it as a send failure or resend.
+                log.error("SMTP accepted alert {}; delivery-state persistence failed", alert.alertLogId());
+            }
+            log.info("SMTP accepted {} alert for product {} to {}",
+                    alert.kind(), alert.productId(), mask(alert.email()));
+        }
+    }
+
+    private void recordFailure(Long id, String message) {
+        try { writer.markFailed(id, message); }
+        catch (RuntimeException e) { log.error("Could not persist email delivery failure for alert {}", id); }
+    }
+
+    static MailDeliveryResult classifyFailure(Throwable failure) {
+        var pending = new ArrayDeque<Throwable>();
+        Set<Throwable> seen = Collections.newSetFromMap(new IdentityHashMap<>());
+        pending.add(failure);
+        boolean timeout = false, tls = false, address = false, rejected = false, connection = false;
+        boolean authentication = false, possiblyAccepted = false;
+        while (!pending.isEmpty() && seen.size() < 32) {
+            Throwable next = pending.remove();
+            if (!seen.add(next)) continue;
+            if (next instanceof MailAuthenticationException || next instanceof AuthenticationFailedException) {
+                authentication = true;
+            }
+            timeout |= next instanceof java.net.SocketTimeoutException;
+            // A generic SSLException can happen after DATA was accepted; only a handshake failure
+            // is safely classified as occurring before the message was submitted.
+            tls |= next instanceof javax.net.ssl.SSLHandshakeException;
+            address |= next instanceof AddressException;
+            rejected |= next instanceof SendFailedException;
+            if (next instanceof SendFailedException send && send.getValidSentAddresses() != null
+                    && send.getValidSentAddresses().length > 0) possiblyAccepted = true;
+            connection |= next instanceof java.net.ConnectException || next instanceof java.net.UnknownHostException;
+            if (next.getCause() != null) pending.add(next.getCause());
+            if (next instanceof MessagingException mail && mail.getNextException() != null) pending.add(mail.getNextException());
+            if (next instanceof MailSendException mail) {
+                for (Exception nested : mail.getMessageExceptions()) if (nested != null) pending.add(nested);
             }
         }
+        if (possiblyAccepted) return new MailDeliveryResult(false, "smtp_delivery_unconfirmed",
+                "SMTP may have accepted the email. Delivery is unconfirmed; no automatic resend was attempted.");
+        if (authentication) return new MailDeliveryResult(false, "smtp_authentication_failed",
+                "SMTP authentication failed. Check MAIL_USERNAME and MAIL_PASSWORD; Gmail requires an App Password.");
+        if (tls) return new MailDeliveryResult(false, "smtp_tls_failed", "SMTP TLS negotiation failed. Check the SMTP host and STARTTLS configuration.");
+        if (timeout) return new MailDeliveryResult(false, "smtp_timeout", "SMTP timed out. Delivery is unconfirmed; no automatic resend was attempted.");
+        if (address) return new MailDeliveryResult(false, "invalid_email_address", "The sender or recipient email address is invalid.");
+        if (rejected) return new MailDeliveryResult(false, "smtp_rejected", "SMTP rejected the email. Check the sender and recipient settings.");
+        if (connection) return new MailDeliveryResult(false, "smtp_connection_failed", "Could not connect to SMTP. Check MAIL_HOST, MAIL_PORT and network access.");
+        return new MailDeliveryResult(false, "smtp_send_failed", "Email delivery failed. Check SMTP configuration and provider availability.");
+    }
+
+    private static InternetAddress singleAddress(String value) throws AddressException {
+        if (value == null || value.indexOf('\r') >= 0 || value.indexOf('\n') >= 0) throw new AddressException();
+        InternetAddress[] addresses = InternetAddress.parse(value, true);
+        if (addresses.length != 1 || addresses[0].isGroup()) throw new AddressException();
+        addresses[0].validate();
+        return addresses[0];
     }
 
     private MimeMessage build(JavaMailSender sender, PendingAlert alert) throws Exception {
         MimeMessage message = sender.createMimeMessage();
         MimeMessageHelper helper =
                 new MimeMessageHelper(message, true, StandardCharsets.UTF_8.name());
-        helper.setFrom(props.getAlerts().getFrom());
-        helper.setTo(alert.email());
+        helper.setFrom(singleAddress(props.getAlerts().getFrom()));
+        helper.setTo(singleAddress(alert.email()));
         helper.setSubject(subject(alert));
         helper.setText(plainBody(alert), htmlBody(alert));
         return message;

@@ -139,7 +139,7 @@ export default function LandingPage() {
             <p className="claim-body">
               {caps.aiEnabled ? (
                 <>
-                  Claude is given the whole recorded price series for a product, not just today&apos;s
+                  The AI is given the whole recorded price series for a product, not just today&apos;s
                   figure, and asked whether this is a good moment to buy. It returns a verdict, a
                   confidence, and its reasoning — all three are shown, because a verdict without its
                   reasoning is an oracle and nobody can sensibly disagree with an oracle. Having the

@@ -1,0 +1,20 @@
+# Opt in explicitly with SPRING_PROFILES_ACTIVE=cloudwatch (or dev,cloudwatch).
+# The EC2 instance role supplies credentials; do not add static keys here.
+spring:
+  cloud:
+    aws:
+      region:
+        static: ${AWS_REGION}
+      credentials:
+        instance-profile: true
+      cloudwatch:
+        enabled: true
+
+management:
+  cloudwatch:
+    metrics:
+      export:
+        enabled: true
+        namespace: ${CLOUDWATCH_NAMESPACE}
+        step: ${CLOUDWATCH_STEP:60s}
+        batch-size: 20

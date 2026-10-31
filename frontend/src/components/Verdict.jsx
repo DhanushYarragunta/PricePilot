@@ -2,14 +2,14 @@ import Money from './Money.jsx';
 import { formatRelative } from '../lib/time.js';
 
 /**
- * Claude's read on a price — the compact chip, and the full block.
+ * The AI's read on a price — the compact chip, and the full block.
  *
  * ── The one thing this component must never do ──
  * Hide a stale verdict. `ApiViews.Verdict.stale` is true when the price has moved since the verdict
  * was formed, and the temptation is to suppress it so the page always shows something confident.
  * That is exactly backwards: a verdict formed at ₹1,31,000 is still useful when the price is now
  * ₹1,24,000 — it says an analysis thought the higher figure was fair — but presenting it as current
- * would be a claim about a price Claude never saw. So it is shown, marked, and the price it was
+ * would be a claim about a price the AI never saw. So it is shown, marked, and the price it was
  * formed on is stated beside it.
  *
  * ── Why the reasoning is never truncated ──

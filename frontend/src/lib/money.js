@@ -108,6 +108,20 @@ export function formatInteger(value) {
   return n === null ? '—' : WHOLE.format(Math.round(n));
 }
 
+/** An unknown provider rate must never appear as a free API call. */
+export function formatUsdEstimate(value, digits = 4) {
+  const amount = toNumber(value);
+  return amount === null || amount < 0 ? 'Not estimated' : '$' + amount.toFixed(digits);
+}
+
+export function summarizeSpend(rows) {
+  const known = rows.map((row) => toNumber(row.costUsd)).filter((cost) => cost !== null && cost >= 0);
+  return {
+    total: known.length ? known.reduce((sum, cost) => sum + cost, 0) : null,
+    hasUnknown: known.length !== rows.length,
+  };
+}
+
 /**
  * The difference between two prices, as a ready-to-render object.
  *

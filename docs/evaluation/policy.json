@@ -1,0 +1,10 @@
+{
+  "created_at": "2026-10-31T15:55:20.026615Z",
+  "currency": "INR",
+  "fallback_supported": false,
+  "max_observation_gap_seconds": 600,
+  "planned_products": 50,
+  "price_tolerance": "0.00",
+  "require_human_verifier": true,
+  "schema_version": 1
+}

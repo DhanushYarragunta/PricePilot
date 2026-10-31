@@ -316,7 +316,8 @@ public class DashboardService {
                 limits.getMaxTrackedProductsPerUser(),
                 limits.getMaxListingsPerProduct(),
                 limits.getManualRefreshPerHour(),
-                limits.getHistoryWindowDays());
+                limits.getHistoryWindowDays(),
+                props.getScheduler().isEnabled());
     }
 
     // ------------------------------------------------------------------ verdict view

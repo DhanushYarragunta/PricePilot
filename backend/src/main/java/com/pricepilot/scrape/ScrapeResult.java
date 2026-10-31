@@ -1,6 +1,8 @@
 package com.pricepilot.scrape;
 
 import com.pricepilot.domain.ScrapeOutcome;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 
 /**
  * Everything one scrape attempt produced: the data if it worked, the diagnosis if it did not, and
@@ -19,10 +21,10 @@ import com.pricepilot.domain.ScrapeOutcome;
  * @param httpStatus the retailer's status code, or {@code null} if we never got one
  * @param latencyMs  wall-clock time for the fetch
  * @param bytes      size of the decoded body
- * @param source     direct or via the paid unblocker; {@code null} when no request was made
- * @param strategy   which extraction strategy supplied the price, suffixed {@code +unblocker} when
- *                   the bytes were paid for. Stored on every attempt row, which is what makes the
- *                   per-strategy success table a measurement
+ * @param source     BrowserAct for new provider submissions; historical records may use older
+ *                   sources. {@code null} when no provider submission was made
+ * @param strategy   which extraction strategy supplied the price (BrowserAct for new checks),
+ *                   stored on every attempt row for per-strategy success metrics
  * @param message    human-readable detail, kept short enough for the 500-character column
  */
 public record ScrapeResult(
@@ -35,7 +37,38 @@ public record ScrapeResult(
         int bytes,
         FetchedPage.FetchSource source,
         String strategy,
-        String message) {
+        String message,
+        Instant observedAt,
+        Reuse reuse) {
+
+    public enum Reuse { NONE, CACHE, SHARED }
+
+    public ScrapeResult {
+        // PostgreSQL timestamps retain microseconds. Stable precision lets a replay compare equal
+        // after a database round trip instead of appearing a few nanoseconds newer.
+        if (observedAt != null) observedAt = observedAt.truncatedTo(ChronoUnit.MICROS);
+        if (reuse == null) reuse = Reuse.NONE;
+    }
+
+    /** Legacy callers still create a new observation; reuse always supplies its original time. */
+    public ScrapeResult(ScrapeOutcome outcome, ProductSnapshot snapshot, String host, String finalUrl,
+                        Integer httpStatus, int latencyMs, int bytes, FetchedPage.FetchSource source,
+                        String strategy, String message) {
+        this(outcome, snapshot, host, finalUrl, httpStatus, latencyMs, bytes, source, strategy, message,
+                outcome == ScrapeOutcome.SUCCESS && snapshot != null && snapshot.isVerified() ? Instant.now() : null,
+                Reuse.NONE);
+    }
+
+    public boolean reused() { return reuse != null && reuse != Reuse.NONE; }
+    public boolean cacheHit() { return reuse == Reuse.CACHE; }
+    public boolean shared() { return reuse == Reuse.SHARED; }
+
+    /** Reusing a result never claims another paid submission or another observation. */
+    public ScrapeResult reusedAs(Reuse reason) {
+        if (reason == null || reason == Reuse.NONE) throw new IllegalArgumentException("Reuse kind required");
+        return new ScrapeResult(outcome, snapshot, host, finalUrl, httpStatus, 0, 0, null,
+                strategy, message, observedAt, reason);
+    }
 
     /** Column width in {@code scrape_attempt.error_message}. */
     private static final int MESSAGE_LIMIT = 480;

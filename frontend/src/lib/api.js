@@ -190,9 +190,22 @@ export const api = {
   addRetailer: (productId, url) => post('/api/products/' + productId + '/listings', { url }),
   makePrimary: (productId, listingId) =>
     post('/api/products/' + productId + '/listings/' + listingId + '/primary'),
-  refresh: (productId) => post('/api/products/' + productId + '/refresh'),
+  refresh: (productId, options) => post('/api/products/' + productId + '/refresh', {}, options),
+  refreshStatus: (productId, jobId, options) =>
+    get('/api/products/' + productId + '/refresh/' + encodeURIComponent(jobId), options),
   analyse: (productId) => post('/api/products/' + productId + '/analyse'),
   discover: (productId) => post('/api/products/' + productId + '/discover'),
+  assistant: (productId, payload, options) =>
+    post('/api/products/' + productId + '/assistant', payload, options),
+
+  research: (productId, identity = {}, options) => {
+    const query = new URLSearchParams(Object.entries(identity).filter(([, value]) => value !== '' && value != null));
+    return get('/api/products/' + productId + '/research?' + query, options);
+  },
+  runResearch: (productId, payload) => post('/api/products/' + productId + '/research', payload),
+  buyingPlan: (productId, options) => get('/api/products/' + productId + '/buying-plan', options),
+  updateBuyingPlan: (productId, payload) => patch('/api/products/' + productId + '/buying-plan', payload),
+  discussPlan: (productId, payload) => post('/api/products/' + productId + '/buying-plan/conversation', payload),
 
   // trackers
   updateTracker: (trackerId, payload) => patch('/api/trackers/' + trackerId, payload),
@@ -200,6 +213,9 @@ export const api = {
 
   // alerts
   alerts: (limit, options) => get('/api/alerts?limit=' + (limit || 50), options),
+
+  mailStatus: (options) => get('/api/alerts/mail-status', options),
+  testEmail: () => post('/api/alerts/test-email'),
 
   // public
   metrics: (windowDays, options) => get('/api/metrics?windowDays=' + (windowDays || 0), options),

@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { api } from '../lib/api.js';
 import { useAsync, useAction } from '../lib/useAsync.js';
+import { useProductRefresh } from '../lib/useProductRefresh.js';
+import { refreshProgress } from '../lib/productRefresh.js';
 import { useCapabilities } from '../lib/capabilities.jsx';
 import { useToast } from '../lib/toast.jsx';
 import Money from '../components/Money.jsx';
@@ -11,6 +13,9 @@ import Working from '../components/Working.jsx';
 import PriceChart from '../components/PriceChart.jsx';
 import CheckLog from '../components/CheckLog.jsx';
 import StatusBadge from '../components/StatusBadge.jsx';
+import ProductResearch from '../components/ProductResearch.jsx';
+import BuyingAdvisor from '../components/BuyingAdvisor.jsx';
+import ShoppingAssistant from '../components/ShoppingAssistant.jsx';
 import Notice, { ErrorNotice } from '../components/Notice.jsx';
 import { VerdictBlock, VerdictHistory } from '../components/Verdict.jsx';
 import { formatCount, formatInteger, formatPercent } from '../lib/money.js';
@@ -57,15 +62,15 @@ export default function ProductPage() {
     return () => clearTimeout(timer);
   }, [priceMoved]);
 
-  const refresh = useAction(async () => {
+  const refresh = useProductRefresh(productId, async (summary, options) => {
     const before = shownPrice.current;
-    const summary = await api.refresh(productId);
     const changed = summary.results.some(
       (report) => report.success && report.previousPrice && report.dropPercent
     );
-    await reloadAndCompare(before, changed);
-    if (summary.succeeded === 0 && summary.requestsMade > 0) {
-      toast.warn(summary.message, 'Nothing could be read');
+    await reloadAndCompare(before, changed, options);
+    if (options.signal?.aborted) return summary;
+    if (summary.status !== 'COMPLETED') {
+      toast.warn(summary.message, summary.status === 'PARTIAL' ? 'Some prices were checked' : 'Check incomplete');
     } else {
       toast.notify(summary.message, 'Checked');
     }
@@ -75,7 +80,7 @@ export default function ProductPage() {
   const analyse = useAction(async () => {
     const verdict = await api.analyse(productId);
     product.patch((current) => ({ ...current, verdict }));
-    toast.notify(verdict.headline || verdict.label, 'Claude has looked again');
+    toast.notify(verdict.headline || verdict.label, 'Analysis updated');
     return verdict;
   });
 
@@ -90,8 +95,9 @@ export default function ProductPage() {
     return outcome;
   });
 
-  async function reloadAndCompare(before, changed) {
-    const fresh = await api.product(productId);
+  async function reloadAndCompare(before, changed, options = {}) {
+    const fresh = await api.product(productId, options);
+    if (options.signal?.aborted) return;
     product.patch(fresh);
     const after = fresh?.stats?.current;
     if (changed || (before !== null && after !== undefined && Number(before) !== Number(after))) {
@@ -164,7 +170,7 @@ export default function ProductPage() {
 
           <div className="product-actions">
             <button type="button" className="btn" onClick={() => refresh.run().catch(noop)} disabled={refresh.busy}>
-              {refresh.busy ? 'Checking every retailer…' : 'Check prices now'}
+              {refresh.busy ? 'Checking prices…' : refresh.resumable ? 'Resume price check' : 'Check prices now'}
             </button>
 
             {/*
@@ -179,9 +185,11 @@ export default function ProductPage() {
                 onClick={() => analyse.run().catch(noop)}
                 disabled={analyse.busy}
               >
-                {analyse.busy ? 'Asking Claude…' : 'Ask Claude again'}
+                {analyse.busy ? 'Analysing…' : 'Analyse this price'}
               </button>
             ) : null}
+
+            <a className="btn btn-ghost" href="#shopping-assistant">Compare alternatives</a>
 
             {caps.searchEnabled && detail.discoveryAvailable ? (
               <button
@@ -194,15 +202,17 @@ export default function ProductPage() {
               </button>
             ) : null}
 
-            {refresh.busy ? <Working label="Reading the retailers' pages" inline /> : null}
+            {refresh.busy ? <Working label={refreshProgress(refresh.job)} inline /> : null}
 
             <span className="product-allowance">
               {primary
-                ? 'Checked automatically ' +
+                ? (caps.schedulerEnabled === true ? 'Checked automatically ' +
                   formatInterval(primary.checkIntervalMinutes) +
                   ', next ' +
                   formatUntil(primary.nextCheckAt) +
-                  '. Manual checks are limited to ' +
+                  '. ' : caps.schedulerEnabled === false ? 'Automatic checks are paused. Use Check prices now. '
+                    : 'Automatic check status is unavailable. ') +
+                  'Manual checks are limited to ' +
                   caps.manualRefreshPerHour +
                   ' an hour, which is what keeps this polite enough that retailers keep answering.'
                 : null}
@@ -216,6 +226,11 @@ export default function ProductPage() {
       </section>
 
       <Stats stats={detail.stats} currency={detail.currency} />
+
+      <ShoppingAssistant key={detail.productId} productId={detail.productId} />
+
+      <BuyingAdvisor key={'plan-' + detail.productId} productId={detail.productId} listings={detail.listings} observedAt={primary?.observedAt} />
+      <ProductResearch key={'research-' + detail.productId} productId={detail.productId} listings={detail.listings} />
 
       <div className="product-grid">
         <div className="stack">
@@ -255,7 +270,7 @@ export default function ProductPage() {
           {caps.aiEnabled ? (
             <section className="panel">
               <header className="panel-head">
-                <h2 className="panel-title">Claude&apos;s read</h2>
+                <h2 className="panel-title">AI deal analysis</h2>
                 {analyse.busy ? <Working label="Thinking" inline /> : null}
               </header>
               <div className="panel-body stack">

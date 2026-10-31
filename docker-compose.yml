@@ -18,10 +18,10 @@
 #  health checks below are what make that the worst case rather than the start of
 #  an outage nobody notices.
 #
-#  Usage:
-#    cp .env.example .env     # then fill it in
-#    docker compose up -d --build
-#    docker compose logs -f app
+#  Usage: follow README.md for backup and coordinated app/web updates.
+#    ./deploy/compose.sh config --quiet
+#    ./deploy/compose.sh up -d --build
+#  Keep the existing server .env and named volumes when upgrading.
 # ════════════════════════════════════════════════════════════════════════════
 
 name: pricepilot
@@ -144,20 +144,54 @@ services:
       APP_PUBLIC_URL: ${APP_PUBLIC_URL:-http://localhost}
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost}
 
-      # ── Claude: the only LLM ──
+      # ── AI: configurable gateway; credentials remain on the backend ──
+      AI_PROVIDER: ${AI_PROVIDER:-anthropic}
+      AI_API_KEY: ${AI_API_KEY:-}
+      AI_BASE_URL: ${AI_BASE_URL:-}
+      AI_MODEL: ${AI_MODEL:-}
+      AI_MAX_TOKENS: ${AI_MAX_TOKENS:-0}
+      AI_TIMEOUT_MS: ${AI_TIMEOUT_MS:-45000}
+      AI_REASONING_EFFORT: ${AI_REASONING_EFFORT-low}
+      AI_MONTHLY_CALL_BUDGET: ${AI_MONTHLY_CALL_BUDGET:-100}
+      AI_INPUT_USD_PER_MILLION: ${AI_INPUT_USD_PER_MILLION:-}
+      AI_OUTPUT_USD_PER_MILLION: ${AI_OUTPUT_USD_PER_MILLION:-}
+      AI_CACHED_INPUT_USD_PER_MILLION: ${AI_CACHED_INPUT_USD_PER_MILLION:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-haiku-4-5}
+      ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL:-https://api.anthropic.com}
       AI_MONTHLY_BUDGET_USD: ${AI_MONTHLY_BUDGET_USD:-5.00}
 
       # ── Tavily: discovery only, never a price source ──
       TAVILY_API_KEY: ${TAVILY_API_KEY:-}
       TAVILY_MONTHLY_CALL_BUDGET: ${TAVILY_MONTHLY_CALL_BUDGET:-500}
 
+      # Evidence research and stored-history planning
+      RESEARCH_MAX_SEARCHES: ${RESEARCH_MAX_SEARCHES:-6}
+      RESEARCH_TIMEOUT_SECONDS: ${RESEARCH_TIMEOUT_SECONDS:-65}
+      RESEARCH_CACHE_HOURS: ${RESEARCH_CACHE_HOURS:-24}
+      RESEARCH_MAX_SOURCES: ${RESEARCH_MAX_SOURCES:-16}
+      PLANNING_MIN_FORECAST_OBSERVATIONS: ${PLANNING_MIN_FORECAST_OBSERVATIONS:-12}
+      PLANNING_MIN_FORECAST_DAYS: ${PLANNING_MIN_FORECAST_DAYS:-7}
+      PLANNING_MAX_FORECAST_DAYS: ${PLANNING_MAX_FORECAST_DAYS:-30}
+      PLANNING_STALE_AFTER_HOURS: ${PLANNING_STALE_AFTER_HOURS:-24}
+      PLANNING_GAP_AFTER_HOURS: ${PLANNING_GAP_AFTER_HOURS:-48}
+      PLANNING_REASSESS_AFTER_HOURS: ${PLANNING_REASSESS_AFTER_HOURS:-24}
+      PLANNING_DEADLINE_RISK_DAYS: ${PLANNING_DEADLINE_RISK_DAYS:-3}
+      PLANNING_MIN_SAVINGS_PERCENT: ${PLANNING_MIN_SAVINGS_PERCENT:-3}
+      PLANNING_MAX_BACKTEST_ERROR_PERCENT: ${PLANNING_MAX_BACKTEST_ERROR_PERCENT:-15}
+      PLANNING_MIN_COVERAGE_PERCENT: ${PLANNING_MIN_COVERAGE_PERCENT:-50}
+      PLANNING_SCHEDULER_BATCH_SIZE: ${PLANNING_SCHEDULER_BATCH_SIZE:-20}
+      PLANNING_AI_TIMEOUT_SECONDS: ${PLANNING_AI_TIMEOUT_SECONDS:-15}
+      PLANNING_ZONE_ID: ${PLANNING_ZONE_ID:-Asia/Kolkata}
+
       # ── Scraping ──
       SCRAPE_TIMEOUT_MS: ${SCRAPE_TIMEOUT_MS:-20000}
       SCRAPE_MAX_CONCURRENCY: ${SCRAPE_MAX_CONCURRENCY:-2}
       SCRAPE_MIN_DELAY_MS: ${SCRAPE_MIN_DELAY_MS:-4000}
       SCRAPE_FRESHNESS_SECONDS: ${SCRAPE_FRESHNESS_SECONDS:-900}
+      SCRAPE_CACHE_MAX_ENTRIES: ${SCRAPE_CACHE_MAX_ENTRIES:-2000}
+      SCHEDULER_FRESHNESS_GRACE_SECONDS: ${SCHEDULER_FRESHNESS_GRACE_SECONDS:-300}
+      # Legacy settings retained for compatibility; unused by price scraping.
       SCRAPER_PROVIDER: ${SCRAPER_PROVIDER:-none}
       SCRAPER_API_KEY: ${SCRAPER_API_KEY:-}
       SCRAPER_MONTHLY_CALL_BUDGET: ${SCRAPER_MONTHLY_CALL_BUDGET:-800}
@@ -166,7 +200,7 @@ services:
       # file on the host, press the button, no rebuild and no restart.
       SCRAPE_RULES_PATH: file:/app/config/domain-rules.yml
 
-      # ── BrowserAct: headless browser extraction for anti-bot retailers ──
+      # ── BrowserAct: the only price-scraping provider for every retailer ──
       BROWSERACT_API_KEY: ${BROWSERACT_API_KEY:-}
       BROWSERACT_WORKFLOW_ID: ${BROWSERACT_WORKFLOW_ID:-}
       BROWSERACT_TIMEOUT_MS: ${BROWSERACT_TIMEOUT_MS:-90000}
@@ -174,6 +208,22 @@ services:
 
       # ── Scheduler ──
       SCHEDULER_ENABLED: ${SCHEDULER_ENABLED:-true}
+      SCHEDULER_SHUTDOWN_GRACE_SECONDS: ${SCHEDULER_SHUTDOWN_GRACE_SECONDS:-400}
+
+      # ── Bounded manual refresh jobs and cooperative shutdown ──
+      MANUAL_REFRESH_WORKERS: ${MANUAL_REFRESH_WORKERS:-1}
+      MANUAL_REFRESH_QUEUE_CAPACITY: ${MANUAL_REFRESH_QUEUE_CAPACITY:-8}
+      MANUAL_REFRESH_MAX_JOBS: ${MANUAL_REFRESH_MAX_JOBS:-200}
+      MANUAL_REFRESH_RETENTION_SECONDS: ${MANUAL_REFRESH_RETENTION_SECONDS:-3600}
+      MANUAL_REFRESH_SHUTDOWN_GRACE_SECONDS: ${MANUAL_REFRESH_SHUTDOWN_GRACE_SECONDS:-400}
+      SHUTDOWN_TIMEOUT: ${SHUTDOWN_TIMEOUT:-420s}
+
+      # ── Optional CloudWatch: an explicit profile plus region/namespace is required ──
+      # AWS credentials come from the EC2 instance role, never frontend/static keys.
+      SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-}
+      CLOUDWATCH_NAMESPACE: ${CLOUDWATCH_NAMESPACE:-}
+      AWS_REGION: ${AWS_REGION:-}
+      CLOUDWATCH_STEP: ${CLOUDWATCH_STEP:-60s}
 
       # ── Email, optional ──
       MAIL_ENABLED: ${MAIL_ENABLED:-false}
@@ -200,7 +250,8 @@ services:
 
     # Explicit here as well as in the image, because `docker compose up` on a
     # host that has an older image cached would otherwise run without it.
-    stop_grace_period: 40s
+    # Covers separate web and background lifecycle phases; idle stops are fast.
+    stop_grace_period: ${STOP_GRACE_PERIOD:-900s}
 
     mem_limit: 900m
     mem_reservation: 512m
