@@ -5,7 +5,7 @@ import { api } from './api.js';
  * What this deployment can actually do.
  *
  * Fetched once, before the app renders its first page, from the public
- * `GET /api/meta/capabilities`. Every paid integration in this project is optional — no Claude key
+ * `GET /api/meta/capabilities`. Every paid integration in this project is optional — no AI key
  * means no verdicts, no Tavily key means no "find other retailers", no SMTP means alerts appear in
  * the app but never in an inbox — and the backend is built to degrade rather than fail in each case.
  *
@@ -26,6 +26,7 @@ const defaults = {
   aiEnabled: false,
   searchEnabled: false,
   emailEnabled: false,
+  schedulerEnabled: null,
   inviteRequired: false,
   supportedRetailers: [],
   // Mirrors `pricepilot.limits` in the backend's application.yml. These are only ever used for the

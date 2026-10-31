@@ -22,7 +22,7 @@ import java.util.List;
 import java.util.Optional;
 
 /**
- * Decides when a product is worth asking Claude about, asks, and stores the answer.
+ * Decides when a product is worth asking AI about, asks, and stores the answer.
  *
  * <p>The judgement this class exists to make is <em>when not to ask</em>. Running an analysis on
  * every scrape would be both expensive and pointless: a price that has not moved does not have a new
@@ -31,14 +31,14 @@ import java.util.Optional;
  * {@code ai.reanalysis-price-delta} and the last verdict is older than
  * {@code ai.reanalysis-min-age-hours} — or when a user explicitly asks for a fresh opinion.
  *
- * <p>Nothing here is allowed to break price tracking. Claude being unconfigured, out of budget,
+ * <p>Nothing here is allowed to break price tracking. AI being unconfigured, out of budget,
  * unreachable, rate-limited or simply wrong about JSON all end the same way: no new verdict row, a
  * log line, and a product that still has its full price history, charts and alerts.
  * {@link #analyseIfDue} therefore returns an empty Optional rather than throwing. The one exception
  * is {@link #analyseNow}, which a person triggered from the UI and who deserves to be told why it
  * did not work.
  *
- * <p>No database transaction is held open across the API call. A Claude request can take the better
+ * <p>No database transaction is held open across the API call. A AI request can take the better
  * part of a minute on a retry, and on a single small box with a handful of pool connections, holding
  * one for that long is how a slow dependency turns into a dead website. Evidence is read first, the
  * call happens with no connection checked out, and the result is written in one short save.
@@ -51,20 +51,20 @@ public class DealAnalyzer {
     /** Window for the rolling average shown to the model. */
     private static final Duration AVERAGE_WINDOW = Duration.ofDays(30);
 
-    private final ClaudeClient claude;
+    private final AiClient ai;
     private final ObjectMapper mapper;
     private final AppProperties props;
     private final ProductRepository products;
     private final PricePointRepository pricePoints;
     private final DealAnalysisRepository analyses;
 
-    public DealAnalyzer(ClaudeClient claude,
+    public DealAnalyzer(AiClient ai,
                         ObjectMapper mapper,
                         AppProperties props,
                         ProductRepository products,
                         PricePointRepository pricePoints,
                         DealAnalysisRepository analyses) {
-        this.claude = claude;
+        this.ai = ai;
         this.mapper = mapper;
         this.props = props;
         this.products = products;
@@ -73,7 +73,7 @@ public class DealAnalyzer {
     }
 
     public boolean isEnabled() {
-        return claude.isEnabled();
+        return ai.isEnabled();
     }
 
     public Optional<DealAnalysis> latest(Long productId) {
@@ -87,11 +87,11 @@ public class DealAnalyzer {
      * due, was not possible, or failed — all three are normal and none is worth an alarm.
      */
     public Optional<DealAnalysis> analyseIfDue(Long productId) {
-        if (!claude.isEnabled()) {
+        if (!ai.isEnabled()) {
             return Optional.empty();
         }
-        if (!claude.hasBudget()) {
-            log.debug("Skipping analysis of product {}: monthly Claude budget is used up", productId);
+        if (!ai.hasBudget()) {
+            log.debug("Skipping analysis of product {}: monthly AI budget is used up", productId);
             return Optional.empty();
         }
 
@@ -256,11 +256,11 @@ public class DealAnalyzer {
         String userMessage = DealPrompt.userMessage(context);
         log.info("Analysing {} [{}]", context.title(), DealPrompt.summarise(context));
 
-        ClaudeResponse response = claude.complete(
+        AiResponse response = ai.complete(
                 DealPrompt.SYSTEM_PROMPT, userMessage, DealPrompt.JSON_PREFILL);
 
         if (response.truncated()) {
-            throw new AiException("Claude's reply was cut off at the " + props.getAi().getMaxTokens()
+            throw new AiException("AI's reply was cut off at the " + props.getAi().getMaxTokens()
                                   + "-token limit, so the JSON is incomplete. Raise ai.max-tokens.",
                     false, null);
         }
@@ -293,10 +293,10 @@ public class DealAnalyzer {
 
         DealAnalysis saved = analyses.save(analysis);
 
-        log.info("Product {} -> {} ({} confidence){} | {} | ${} {}",
+        log.info("Product {} -> {} ({} confidence){} | {} | cost {} {}",
                 context.productId(), verdict, saved.getConfidence(),
                 previous == null ? "" : " was " + previous.getVerdict(),
-                saved.getHeadline(), saved.getCostUsd().toPlainString(),
+                saved.getHeadline(), saved.getCostUsd() == null ? "unknown" : "$" + saved.getCostUsd().toPlainString(),
                 response.cacheHit() ? "(prompt cache hit)" : "");
         return saved;
     }
@@ -317,15 +317,13 @@ public class DealAnalyzer {
             if (salvaged != null) {
                 try {
                     DealVerdictJson result = mapper.readValue(salvaged, DealVerdictJson.class);
-                    log.warn("Claude's reply needed salvaging before it parsed. Raw reply: {}",
-                            abbreviate(text));
+                    log.warn("AI reply needed JSON extraction before it parsed");
                     return result;
                 } catch (Exception ignored) {
                     // Fall through to the failure below, which carries the more useful first cause.
                 }
             }
-            throw new AiException("Claude's reply was not usable JSON: " + first.getMessage()
-                                  + ". Raw reply: " + abbreviate(text), true, null, first);
+            throw new AiException("AI reply was not usable JSON. Please try again later.", false, null);
         }
     }
 
@@ -379,8 +377,4 @@ public class DealAnalyzer {
         return (int) Math.min(value, Integer.MAX_VALUE);
     }
 
-    private static String abbreviate(String text) {
-        String flat = text.replace('\n', ' ').trim();
-        return flat.length() <= 400 ? flat : flat.substring(0, 400) + "...";
-    }
 }

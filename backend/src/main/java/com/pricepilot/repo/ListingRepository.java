@@ -4,6 +4,8 @@ import com.pricepilot.domain.Listing;
 import com.pricepilot.domain.ListingStatus;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
+import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -32,13 +34,18 @@ public interface ListingRepository extends JpaRepository<Listing, Long> {
     @Query("SELECT l FROM Listing l JOIN FETCH l.product WHERE l.id = :id")
     Optional<Listing> findWithProductById(@Param("id") Long id);
 
+    /** Serializes only short observation writes; no lock is held during provider calls. */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT l FROM Listing l JOIN FETCH l.product WHERE l.id = :id")
+    Optional<Listing> findWithProductByIdForUpdate(@Param("id") Long id);
+
     /**
      * The scheduler's core query: active listings that are due, oldest-due first, and only for
      * products somebody is actually still watching.
      */
     @Query("""
             SELECT l FROM Listing l
-            WHERE l.status = com.pricepilot.domain.ListingStatus.ACTIVE
+            WHERE l.status IN (com.pricepilot.domain.ListingStatus.ACTIVE, com.pricepilot.domain.ListingStatus.BLOCKED)
               AND l.nextCheckAt <= :now
               AND EXISTS (
                   SELECT 1 FROM Tracker t
@@ -47,6 +54,35 @@ public interface ListingRepository extends JpaRepository<Listing, Long> {
             ORDER BY l.nextCheckAt ASC
             """)
     List<Listing> findDue(@Param("now") Instant now, Pageable pageable);
+
+    /** All due cycle identities, without loading products; needed to measure the backlog tail. */
+    @Query("""
+            SELECT l.id AS id, l.nextCheckAt AS dueAt FROM Listing l
+            WHERE l.status IN (com.pricepilot.domain.ListingStatus.ACTIVE, com.pricepilot.domain.ListingStatus.BLOCKED)
+              AND l.nextCheckAt <= :now
+              AND EXISTS (SELECT 1 FROM Tracker t WHERE t.product = l.product AND t.active = true)
+            ORDER BY l.nextCheckAt ASC, l.id ASC
+            """)
+    List<DueListing> findDueSchedule(@Param("now") Instant now);
+
+    @Query("""
+            SELECT COUNT(l) FROM Listing l
+            WHERE l.status IN (com.pricepilot.domain.ListingStatus.ACTIVE, com.pricepilot.domain.ListingStatus.BLOCKED)
+              AND l.nextCheckAt <= :now
+              AND EXISTS (SELECT 1 FROM Tracker t WHERE t.product = l.product AND t.active = true)
+            """)
+    long countDue(@Param("now") Instant now);
+
+    interface DueListing {
+        Long getId();
+        Instant getDueAt();
+    }
+
+    @Query("SELECT l.lastSuccessAt FROM Listing l WHERE l.id = :id")
+    Optional<Instant> lastSuccessAt(@Param("id") Long id);
+
+    @Query("SELECT l.nextCheckAt FROM Listing l WHERE l.id = :id")
+    Optional<Instant> nextCheckAt(@Param("id") Long id);
 
     /**
      * True when any active tracker on this listing's product wants tight polling,

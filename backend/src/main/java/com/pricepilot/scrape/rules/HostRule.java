@@ -73,7 +73,7 @@ public final class HostRule {
     public String currency() { return currency; }
     public long minDelayMs() { return minDelayMs; }
 
-    /** When true, go straight to the unblocker provider instead of trying a direct fetch first. */
+    /** Legacy rule field; the BrowserAct-only engine ignores alternate-provider settings. */
     public boolean unblockerFirst() { return unblockerFirst; }
 
     public List<String> strategies() { return strategies; }
@@ -165,13 +165,13 @@ public final class HostRule {
 
         public HostRule build() {
             if (strategies.isEmpty()) {
-                strategies = new ArrayList<>(List.of("json-ld", "microdata", "meta", "css"));
+                strategies = new ArrayList<>(List.of("browseract"));
             }
             return new HostRule(this);
         }
     }
 
-    /** A rule for a host that has no entry of its own: structured data only. */
+    /** A rule for an additional host, requiring a configured BrowserAct workflow. */
     public static HostRule generic(String host, HostRule defaults) {
         return builder(host)
                 .retailer(prettyRetailer(host))

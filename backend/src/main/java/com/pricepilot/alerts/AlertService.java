@@ -52,9 +52,7 @@ public class AlertService {
             return;
         }
         List<PendingAlert> pending = writer.fanOutPriceAlerts(refresh);
-        if (!pending.isEmpty()) {
-            mailer.deliver(pending);
-        }
+        dispatch(pending);
     }
 
     /**
@@ -75,7 +73,19 @@ public class AlertService {
         if (!pending.isEmpty()) {
             log.info("Claude rated product {} as {}; notified {} watcher(s)",
                     productId, analysis.getVerdict(), pending.size());
-            mailer.deliver(pending);
+            dispatch(pending);
+        }
+    }
+
+    private void dispatch(List<PendingAlert> pending) {
+        if (pending.isEmpty()) return;
+        try { mailer.deliver(pending); }
+        catch (java.util.concurrent.RejectedExecutionException e) {
+            log.warn("Email queue is full; {} alerts remain recorded", pending.size());
+            for (PendingAlert alert : pending) {
+                try { writer.markFailed(alert.alertLogId(), "Email delivery queue is full. The alert remains in the app."); }
+                catch (RuntimeException failure) { log.error("Could not record email queue failure for alert {}", alert.alertLogId()); }
+            }
         }
     }
 }

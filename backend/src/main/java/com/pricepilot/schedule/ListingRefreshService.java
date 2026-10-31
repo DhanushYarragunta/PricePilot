@@ -4,18 +4,26 @@ import com.pricepilot.ai.DealAnalyzer;
 import com.pricepilot.alerts.AlertService;
 import com.pricepilot.config.AppProperties;
 import com.pricepilot.domain.Listing;
+import com.pricepilot.domain.ListingStatus;
 import com.pricepilot.domain.ScrapeOutcome;
 import com.pricepilot.domain.TriggerSource;
 import com.pricepilot.repo.ListingRepository;
+import com.pricepilot.metrics.ScrapeMetrics;
 import com.pricepilot.scrape.ScrapeEngine;
 import com.pricepilot.scrape.ScrapeResult;
 import com.pricepilot.scrape.UnsupportedUrlException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.beans.factory.annotation.Autowired;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 /**
  * Refreshes one listing, end to end.
@@ -58,6 +66,8 @@ public class ListingRefreshService {
     private final AlertService alerts;
     private final DealAnalyzer analyzer;
     private final AppProperties props;
+    private final ScrapeMetrics metrics;
+    private final ConcurrentHashMap<Long, CompletableFuture<RefreshResult>> inFlight = new ConcurrentHashMap<>();
 
     public ListingRefreshService(ListingRepository listings,
                                  ScrapeEngine engine,
@@ -65,12 +75,20 @@ public class ListingRefreshService {
                                  AlertService alerts,
                                  DealAnalyzer analyzer,
                                  AppProperties props) {
+        this(listings, engine, writer, alerts, analyzer, props, null);
+    }
+
+    @Autowired
+    public ListingRefreshService(ListingRepository listings, ScrapeEngine engine, RefreshWriter writer,
+                                 AlertService alerts, DealAnalyzer analyzer, AppProperties props,
+                                 ScrapeMetrics metrics) {
         this.listings = listings;
         this.engine = engine;
         this.writer = writer;
         this.alerts = alerts;
         this.analyzer = analyzer;
         this.props = props;
+        this.metrics = metrics;
     }
 
     /**
@@ -82,6 +100,77 @@ public class ListingRefreshService {
      * @return what happened, never {@code null}
      */
     public RefreshResult refresh(Long listingId, TriggerSource source) {
+        Instant requestedAt = Instant.now();
+        while (true) {
+            CompletableFuture<RefreshResult> owner = new CompletableFuture<>();
+            CompletableFuture<RefreshResult> existing = inFlight.putIfAbsent(listingId, owner);
+            if (existing != null) {
+                try {
+                    long waitMs = Math.max(1000L, (long) props.getBrowserAct().getTimeoutMs()
+                            + props.getScrape().getTimeoutMs() + 60000L);
+                    RefreshResult shared = existing.get(waitMs, TimeUnit.MILLISECONDS);
+                    if (!shared.isSuccess() && !shared.isSkipped()) {
+                        recordDuplicate();
+                        return sharedCopy(shared);
+                    }
+                    Listing current = listings.findWithProductById(listingId).orElse(null);
+                    if (current == null) return RefreshResult.vanished(listingId);
+                    Instant observedAt = current.getLastSuccessAt();
+                    boolean capturedDuringThisRequest = observedAt != null && !observedAt.isBefore(requestedAt)
+                            && !observedAt.isAfter(Instant.now());
+                    // Scheduler cache policy can be more permissive than a manual request. Waiting
+                    // on its future must not silently weaken this caller's freshness requirement.
+                    if (!capturedDuringThisRequest && !isStillFresh(current, source)) {
+                        inFlight.remove(listingId, existing);
+                        continue;
+                    }
+                    recordDuplicate();
+                    return sharedCopy(shared);
+                } catch (InterruptedException e) {
+                    recordDuplicate();
+                    Thread.currentThread().interrupt();
+                    return sharedWaitFailure(listingId, "Interrupted while waiting for the shared refresh");
+                } catch (ExecutionException | TimeoutException e) {
+                    recordDuplicate();
+                    return sharedWaitFailure(listingId, "The shared refresh did not complete; previous price preserved");
+                }
+            }
+            try {
+                RefreshResult result = refreshOwned(listingId, source).withCompletedAt(Instant.now());
+                // The persisted observation is available before optional mail/AI follow-ups finish.
+                owner.complete(result);
+                inFlight.remove(listingId, owner);
+                runFollowUps(result);
+                return result;
+            } catch (RuntimeException | Error e) {
+                owner.completeExceptionally(e);
+                throw e;
+            } finally {
+                inFlight.remove(listingId, owner);
+            }
+        }
+    }
+
+    private void recordDuplicate() {
+        if (metrics != null) metrics.duplicateSkipped();
+    }
+
+    private static RefreshResult sharedCopy(RefreshResult shared) {
+        boolean reusedPrice = shared.isSuccess() || shared.isSkipped();
+        return new RefreshResult(shared.listingId(), shared.productId(),
+                reusedPrice ? ScrapeOutcome.SKIPPED_FRESH : shared.outcome(),
+                shared.retailer(), shared.price(), null, shared.mrp(), shared.inStock(),
+                false, false, false, shared.nextCheckAt(), shared.intervalMinutes(), "shared", 0, false,
+                reusedPrice ? "Shared a refresh already in progress; no additional submission was made" : shared.message(),
+                shared.completedAt());
+    }
+
+    private static RefreshResult sharedWaitFailure(Long listingId, String message) {
+        return new RefreshResult(listingId, null, ScrapeOutcome.ERROR, null, null, null, null,
+                false, false, false, false, null, 0, "shared", 0, false, message);
+    }
+
+    private RefreshResult refreshOwned(Long listingId, TriggerSource source) {
         Listing listing = listings.findWithProductById(listingId).orElse(null);
         if (listing == null) {
             log.debug("Listing {} vanished before it could be refreshed", listingId);
@@ -90,7 +179,8 @@ public class ListingRefreshService {
 
         // Paused and dead listings can still be handed here by a stale batch or a manual request.
         // Pushing the due time out keeps them from being re-picked every tick.
-        if (!listing.isActive() && source == TriggerSource.SCHEDULER) {
+        if (!listing.isActive() && listing.getStatus() != ListingStatus.BLOCKED
+                && source == TriggerSource.SCHEDULER) {
             log.debug("Skipping listing {}: status is {}", listingId, listing.getStatus());
             writer.deferWithoutAttempt(listingId, DEFER_MINUTES);
             return new RefreshResult(listingId, listing.getProduct().getId(), ScrapeOutcome.SKIPPED_FRESH,
@@ -99,7 +189,18 @@ public class ListingRefreshService {
                     "Listing is " + listing.getStatus() + "; no check was made");
         }
 
+        // A manual refresh may have rescheduled a listing after this scheduler job was queued.
+        // Do not spend another provider submission merely because the queue contains stale work.
+        if (source == TriggerSource.SCHEDULER && listing.getNextCheckAt() != null
+                && listing.getNextCheckAt().isAfter(Instant.now())) {
+            return new RefreshResult(listingId, listing.getProduct().getId(), ScrapeOutcome.SKIPPED_FRESH,
+                    listing.getRetailer(), null, null, null, false, false, false, false,
+                    listing.getNextCheckAt(), listing.getCheckIntervalMinutes(), "none", 0, false,
+                    "The listing was rescheduled before this check started; no request was made");
+        }
+
         if (isStillFresh(listing, source)) {
+            if (metrics != null) metrics.cacheHit();
             ScrapeResult skipped = ScrapeResult.skippedFresh(hostOf(listing), listing.getUrl());
             return writer.recordSkip(listingId, skipped, source);
         }
@@ -110,7 +211,10 @@ public class ListingRefreshService {
             // like "amazon_in" rather than a hostname, and scrapeRaw resolves the rule from the URL
             // itself. The stored URL is already canonical, so the canonicalisation is a no-op — but
             // it is the one call that cannot get the host/rule pairing wrong.
-            result = engine.scrapeRaw(listing.getUrl());
+            Duration maxAge = source == TriggerSource.MANUAL ? MANUAL_FRESHNESS
+                    : source == TriggerSource.SCHEDULER ? Duration.ZERO
+                    : Duration.ofSeconds(Math.max(0, props.getScrape().getFreshnessWindowSeconds()));
+            result = engine.scrapeRaw(listing.getUrl(), maxAge);
         } catch (UnsupportedUrlException e) {
             // The URL stored against this listing is no longer one we can handle: a rule was
             // removed, or the retailer restructured its URLs. Retiring it is right — retrying
@@ -139,7 +243,6 @@ public class ListingRefreshService {
         // Everything past this point is after the commit, and none of it may be allowed to undo the
         // observation that was just stored. A price we fetched is worth keeping even if the email
         // server is down and Claude is out of budget.
-        runFollowUps(refresh);
         return refresh;
     }
 
@@ -191,7 +294,7 @@ public class ListingRefreshService {
      */
     private boolean isStillFresh(Listing listing, TriggerSource source) {
         Instant last = listing.getLastSuccessAt();
-        if (last == null) {
+        if (last == null || last.isAfter(Instant.now())) {
             return false;
         }
         Duration window = switch (source) {

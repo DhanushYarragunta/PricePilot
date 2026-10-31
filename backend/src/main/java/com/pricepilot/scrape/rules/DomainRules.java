@@ -35,9 +35,8 @@ import java.util.regex.PatternSyntaxException;
  *       leaves the previous, working rules in place and returns an error to the caller.
  * </ol>
  *
- * <p>Unknown hosts are not an error. They get a generic rule that tries structured data only
- * (JSON-LD, microdata, Open Graph), which is enough for a large share of Indian storefronts because
- * most of them run Shopify, Magento or Hybris.
+ * <p>Unknown hosts get generic URL normalization and throttling rules. Price extraction
+ * still requires a configured BrowserAct workflow; there is no HTML extraction fallback.
  */
 @Component
 public class DomainRules {

@@ -1,6 +1,7 @@
 package com.pricepilot.discovery;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -10,12 +11,14 @@ import com.pricepilot.usage.BudgetGuard;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
+import org.springframework.beans.factory.annotation.Autowired;
 
 import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.net.http.HttpTimeoutException;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -54,18 +57,20 @@ public class TavilyClient {
     private final ObjectMapper mapper;
     private final HttpClient http;
 
+    @Autowired
     public TavilyClient(AppProperties props, BudgetGuard budget, ObjectMapper mapper) {
+        this(props, budget, mapper, HttpClient.newBuilder()
+                .version(HttpClient.Version.HTTP_1_1)
+                .connectTimeout(Duration.ofSeconds(10)).build());
+    }
+
+    TavilyClient(AppProperties props, BudgetGuard budget, ObjectMapper mapper, HttpClient http) {
         this.props = props;
         this.budget = budget;
         this.mapper = mapper;
-        this.http = HttpClient.newBuilder()
-                .version(HttpClient.Version.HTTP_1_1)
-                .connectTimeout(Duration.ofSeconds(10))
-                .build();
-
+        this.http = http;
         if (!props.getDiscovery().isConfigured()) {
-            log.info("TAVILY_API_KEY is not set. Cross-retailer discovery is off; products added by "
-                     + "URL are tracked normally.");
+            log.info("TAVILY_API_KEY is not set. Cross-retailer search is disabled.");
         }
     }
 
@@ -73,65 +78,48 @@ public class TavilyClient {
         return props.getDiscovery().isConfigured();
     }
 
-    /**
-     * One search. Returns an empty list rather than throwing on any failure, because discovery is a
-     * convenience: a user who added an Amazon URL still gets Amazon tracked whether or not we manage
-     * to find the same product on Croma.
-     *
-     * @param query          what to search for
-     * @param includeDomains registrable domains to restrict the search to. Must not be empty — an
-     *                       unrestricted search returns review blogs and marketplace aggregators
-     */
+    /** Backward-compatible URL discovery for the existing same-product workflow. */
     public List<SearchHit> search(String query, Collection<String> includeDomains) {
-        if (!isAvailable()) {
-            return List.of();
-        }
-        if (query == null || query.isBlank() || includeDomains.isEmpty()) {
-            return List.of();
-        }
+        return searchOutcome(query, includeDomains).hits();
+    }
 
+    /** A failed search is distinct from a successful search that found no results. */
+    public SearchOutcome searchOutcome(String query, Collection<String> includeDomains) {
+        if (!isAvailable()) return SearchOutcome.failed(SearchStatus.NOT_CONFIGURED, null);
+        if (query == null || query.isBlank() || includeDomains == null || includeDomains.isEmpty()) {
+            return SearchOutcome.failed(SearchStatus.INVALID_REQUEST, null);
+        }
+        if (Thread.currentThread().isInterrupted()) return SearchOutcome.failed(SearchStatus.INTERRUPTED, null);
         AppProperties.Discovery cfg = props.getDiscovery();
-
-        // The call is reserved before it is made, so two concurrent searches cannot both slip past
-        // the last remaining slot. The trade is that a search which dies in the network still spends
-        // a slot it was never billed for. That errs towards under-using the free tier, which is the
-        // right direction to be wrong in.
         if (!budget.tryConsumeCall(ApiProvider.TAVILY, cfg.getMonthlyCallBudget())) {
-            log.info("Monthly Tavily budget of {} calls is used up; skipping discovery",
-                    cfg.getMonthlyCallBudget());
-            return List.of();
+            return SearchOutcome.failed(SearchStatus.BUDGET_EXHAUSTED, null);
         }
-
-        String body = requestBody(query, includeDomains, cfg);
-        HttpRequest request = HttpRequest.newBuilder(URI.create(cfg.getBaseUrl() + "/search"))
-                .timeout(Duration.ofMillis(cfg.getTimeoutMs()))
-                .header("content-type", "application/json")
-                // Sent both ways deliberately. Tavily has accepted the key as a body field since its
-                // first API and as a bearer token in later revisions; sending both means a change at
-                // their end does not silently break discovery here. If search ever starts returning
-                // 401 with a valid key, this is the line to check.
-                .header("authorization", "Bearer " + cfg.getApiKey())
-                .POST(HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8))
-                .build();
-
         try {
-            HttpResponse<String> response =
-                    http.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+            HttpRequest request = HttpRequest.newBuilder(URI.create(cfg.getBaseUrl() + "/search"))
+                    .timeout(Duration.ofMillis(cfg.getTimeoutMs()))
+                    .header("content-type", "application/json")
+                    .header("authorization", "Bearer " + cfg.getApiKey())
+                    .POST(HttpRequest.BodyPublishers.ofString(requestBody(query, includeDomains, cfg), StandardCharsets.UTF_8))
+                    .build();
+            HttpResponse<String> response = http.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
             if (response.statusCode() != 200) {
-                log.warn("Tavily returned HTTP {} for '{}': {}", response.statusCode(), query,
-                        abbreviate(response.body()));
-                return List.of();
+                // Provider bodies may contain echoed credentials or user text; log only the status.
+                log.warn("Search provider returned HTTP {}", response.statusCode());
+                return SearchOutcome.failed(SearchStatus.PROVIDER_ERROR, response.statusCode());
             }
             return parse(response.body());
-        } catch (IOException e) {
-            log.warn("Tavily search for '{}' failed: {}", query, e.toString());
-            return List.of();
-        } catch (InterruptedException e) {
+        } catch (HttpTimeoutException ex) {
+            log.warn("Search provider request timed out");
+            return SearchOutcome.failed(SearchStatus.TIMEOUT, null);
+        } catch (IOException ex) {
+            log.warn("Search provider connection failed");
+            return SearchOutcome.failed(SearchStatus.NETWORK_ERROR, null);
+        } catch (InterruptedException ex) {
             Thread.currentThread().interrupt();
-            return List.of();
-        } catch (RuntimeException e) {
-            log.warn("Tavily search for '{}' returned something unexpected: {}", query, e.toString());
-            return List.of();
+            return SearchOutcome.failed(SearchStatus.INTERRUPTED, null);
+        } catch (RuntimeException ex) {
+            log.warn("Search request could not be completed");
+            return SearchOutcome.failed(SearchStatus.INVALID_REQUEST, null);
         }
     }
 
@@ -154,40 +142,50 @@ public class TavilyClient {
         return root.toString();
     }
 
-    private List<SearchHit> parse(String body) {
+    private SearchOutcome parse(String body) {
+        if (body == null || body.length() > 1_048_576) return SearchOutcome.failed(SearchStatus.INVALID_RESPONSE, 200);
         JsonNode root;
         try {
-            root = mapper.readTree(body);
-        } catch (Exception e) {
-            log.warn("Tavily returned a body that is not JSON: {}", abbreviate(body));
-            return List.of();
+            root = mapper.reader().with(DeserializationFeature.FAIL_ON_TRAILING_TOKENS).readTree(body);
+        } catch (Exception ex) {
+            return SearchOutcome.failed(SearchStatus.INVALID_RESPONSE, 200);
         }
-
-        JsonNode results = root.path("results");
-        if (!results.isArray()) {
-            return List.of();
-        }
-
-        List<SearchHit> hits = new ArrayList<>(results.size());
+        JsonNode results = root == null ? null : root.get("results");
+        if (results == null || !results.isArray()) return SearchOutcome.failed(SearchStatus.INVALID_RESPONSE, 200);
+        List<SearchHit> hits = new ArrayList<>();
         for (JsonNode node : results) {
-            String url = node.path("url").asText(null);
-            if (url == null || url.isBlank()) {
-                continue;
-            }
-            hits.add(new SearchHit(
-                    url,
-                    node.path("title").asText(""),
-                    node.path("score").asDouble(0.0)));
+            if (!node.path("url").isTextual()) continue;
+            String url = node.path("url").asText("");
+            if (url.isBlank() || url.length() > 2048) continue;
+            hits.add(new SearchHit(url, node.path("title").asText(""), node.path("score").asDouble(0)));
+            if (hits.size() == MAX_RESULTS_CEILING) break;
         }
-        return hits;
+        return new SearchOutcome(List.copyOf(hits), SearchStatus.SUCCESS, 200);
     }
 
-    private static String abbreviate(String text) {
-        if (text == null) {
-            return "";
+    public enum SearchStatus {
+        SUCCESS, NOT_CONFIGURED, BUDGET_EXHAUSTED, INVALID_REQUEST,
+        PROVIDER_ERROR, TIMEOUT, NETWORK_ERROR, INTERRUPTED, INVALID_RESPONSE
+    }
+
+    public record SearchOutcome(List<SearchHit> hits, SearchStatus status, Integer httpStatus) {
+        public static SearchOutcome failed(SearchStatus status, Integer httpStatus) {
+            return new SearchOutcome(List.of(), status, httpStatus);
         }
-        String flat = text.replace('\n', ' ').trim();
-        return flat.length() <= 300 ? flat : flat.substring(0, 300) + "...";
+        public boolean succeeded() { return status == SearchStatus.SUCCESS; }
+        public String warning() {
+            return switch (status) {
+                case SUCCESS -> null;
+                case NOT_CONFIGURED -> "Cross-store search is not configured; no stores were searched.";
+                case BUDGET_EXHAUSTED -> "The monthly store-search allowance is used up. New store offers could not be searched.";
+                case PROVIDER_ERROR -> "The store-search provider returned HTTP " + httpStatus + ". This search could not be completed.";
+                case TIMEOUT -> "The store-search provider timed out. This search could not be completed.";
+                case NETWORK_ERROR -> "The store-search provider could not be reached. This search could not be completed.";
+                case INTERRUPTED -> "The store search was interrupted before it completed.";
+                case INVALID_RESPONSE -> "The store-search provider returned an unreadable response. Results could not be checked.";
+                case INVALID_REQUEST -> "Store search could not start because its request or configuration was invalid.";
+            };
+        }
     }
 
     /**

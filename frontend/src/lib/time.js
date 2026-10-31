@@ -185,3 +185,11 @@ export function formatLatency(ms) {
 function isThisYear(date) {
   return date.getFullYear() === new Date().getFullYear();
 }
+
+/** A calendar deadline is not a UTC instant; preserve its day in every browser timezone. */
+export function formatDateOnly(value) {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return '—';
+  const date = new Date(value + 'T00:00:00Z');
+  if (Number.isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== value) return '—';
+  return new Intl.DateTimeFormat('en-IN', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' }).format(date);
+}

@@ -2,8 +2,8 @@
 #  PricePilot site configuration
 #
 #  ${DOMAIN} is substituted at container start by the official nginx image's
-#  envsubst step, from the value in .env. nginx's own variables ($host,
-#  $request_uri, ...) are written without braces and are left alone by it.
+#  envsubst step, restricted to DOMAIN by NGINX_ENVSUBST_FILTER in the image.
+#  nginx's own variables ($host, $request_uri, ...) remain untouched.
 #
 #  Two servers: port 80 exists to answer ACME challenges and redirect everything
 #  else, port 443 is the real one.
@@ -13,6 +13,17 @@ server {
     listen 80;
     listen [::]:80;
     server_name ${DOMAIN};
+
+    # Docker probes the local HTTP endpoint even when public requests use TLS.
+    # Serve the built index directly; never redirect this probe to a certificate.
+    location = /healthz {
+        allow 127.0.0.1;
+        allow ::1;
+        deny all;
+        access_log off;
+        root /usr/share/nginx/html;
+        try_files /index.html =503;
+    }
 
     # ── The ACME challenge, before the redirect ──
     #
@@ -37,6 +48,10 @@ server {
     listen [::]:443 ssl;
     http2 on;
     server_name ${DOMAIN};
+
+    resolver 127.0.0.11 valid=10s ipv6=off;
+    resolver_timeout 5s;
+    set $app_upstream http://app:8080;
 
     # ── TLS ──
     #
@@ -88,10 +103,9 @@ server {
     location /api/ {
         limit_req zone=api burst=20 nodelay;
 
-        # `app` is the service name in docker-compose.yml, resolved by Docker's
-        # embedded DNS. The resolver line is not needed because the upstream is
-        # a literal name resolved at each request by nginx's own lookup.
-        proxy_pass http://app:8080;
+        # Resolve Docker's current address after app recreation. The original
+        # path, escaping and query are preserved; /api/ is never stripped.
+        proxy_pass $app_upstream$request_uri;
 
         proxy_http_version 1.1;
         proxy_set_header Host              $host;
@@ -107,16 +121,11 @@ server {
 
         # ── Timeouts ──
         #
-        # 90 seconds, which is much longer than a normal API call and is sized
-        # for exactly one endpoint: POST /api/products fetches the retailer's
-        # page before it answers, and a slow retailer plus a retry can genuinely
-        # take half a minute. The default 60s would turn that into a 504 while
-        # the fetch was still in progress — and the user would see a failure for
-        # a product that then appears in their list anyway, which is the worst
-        # of both outcomes.
+        # BrowserAct plus bounded queueing can outlast nginx's default timeout.
+        # Preserve the application's existing 205-second request allowance.
         proxy_connect_timeout 10s;
-        proxy_send_timeout    90s;
-        proxy_read_timeout    90s;
+        proxy_send_timeout    205s;
+        proxy_read_timeout    205s;
 
         # Buffering off for proxied JSON. The responses are small and this
         # removes a copy; more usefully, it means a slow endpoint starts
@@ -137,8 +146,13 @@ server {
     # Spring's management endpoints are limited to health and info in
     # application.yml, so nothing sensitive is reachable through this.
     location /actuator/health {
-        proxy_pass http://app:8080/actuator/health;
+        proxy_pass $app_upstream$request_uri;
         proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Forwarded-Port $server_port;
         access_log off;
     }
 

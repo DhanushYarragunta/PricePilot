@@ -18,6 +18,10 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 
+# ---- Local Python launcher ----
+__pycache__/
+*.pyc
+
 # ---- Secrets: never commit these ----
 .env
 .env.*
@@ -50,3 +54,4 @@ pgdata/
 backups/
 caddy_data/
 caddy_config/
+/outputs/

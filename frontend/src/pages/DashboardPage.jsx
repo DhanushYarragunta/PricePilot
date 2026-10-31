@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { api } from '../lib/api.js';
 import { useAsync, useAction } from '../lib/useAsync.js';
 import { useCapabilities } from '../lib/capabilities.jsx';
@@ -25,6 +25,7 @@ import { formatRelative } from '../lib/time.js';
  * list has looked like for a very long time, which is worth something.
  */
 export default function DashboardPage() {
+  const navigate = useNavigate();
   const toast = useToast();
   const caps = useCapabilities();
   const products = useAsync((options) => api.products(options), []);
@@ -50,12 +51,12 @@ export default function DashboardPage() {
 
       <AddProduct
         onAdded={(added) => {
-          products.reload();
           toast.notify(
             added.notice ||
               'Now tracking ' + (added.title || 'this product') + ' at ' + added.retailer + '.',
             'Added'
           );
+          navigate('/products/' + added.productId + '#shopping-assistant');
         }}
       />
 

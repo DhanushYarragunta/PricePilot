@@ -77,10 +77,10 @@ public class ClaudeClient {
                 .build();
 
         AppProperties.Ai ai = props.getAi();
-        if (!ai.isConfigured()) {
+        if (ai.isAnthropic() && !ai.isConfigured()) {
             log.warn("ANTHROPIC_API_KEY is not set. Deal analysis is disabled; price tracking, "
                      + "charts and alerts all work without it.");
-        } else if (!ClaudePricing.isKnownModel(ai.getModel())) {
+        } else if (ai.isAnthropic() && !ClaudePricing.isKnownModel(ai.getModel())) {
             log.warn("Model '{}' has no entry in ClaudePricing, so cost will be estimated at Haiku "
                      + "rates. Add it to the rate table to make the spend figures exact.",
                     ai.getModel());
@@ -88,7 +88,7 @@ public class ClaudeClient {
     }
 
     public boolean isEnabled() {
-        return props.getAi().isConfigured();
+        return props.getAi().isAnthropic() && props.getAi().isConfigured();
     }
 
     /**
@@ -112,7 +112,7 @@ public class ClaudeClient {
      */
     public ClaudeResponse complete(String system, String user, String prefill) {
         AppProperties.Ai ai = props.getAi();
-        if (!ai.isConfigured()) {
+        if (!isEnabled()) {
             throw new AiException("Claude is not configured (ANTHROPIC_API_KEY is empty)", false, null);
         }
         if (!budget.hasUsdBudget(ApiProvider.ANTHROPIC, ai.getMonthlyBudgetUsd())) {
@@ -184,7 +184,7 @@ public class ClaudeClient {
         try {
             response = http.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
         } catch (IOException e) {
-            throw new AiException("Could not reach the Claude API: " + e.getMessage(), true, null, e);
+            throw new AiException("Could not reach the Claude API", true, null);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new AiException("Interrupted while calling Claude", false, null, e);
@@ -194,7 +194,7 @@ public class ClaudeClient {
         String body = response.body() == null ? "" : response.body();
 
         if (status != 200) {
-            throw new AiException("Claude API returned HTTP " + status + ": " + errorMessage(body),
+            throw new AiException("Claude API returned HTTP " + status,
                     isRetryableStatus(status), status, retryAfterMs(response));
         }
 
@@ -202,7 +202,7 @@ public class ClaudeClient {
         try {
             json = mapper.readTree(body);
         } catch (Exception e) {
-            throw new AiException("Claude API returned a body that is not JSON", true, status, e);
+            throw new AiException("Claude API returned a body that is not JSON", false, status);
         }
 
         StringBuilder text = new StringBuilder();
@@ -254,21 +254,6 @@ public class ClaudeClient {
      */
     private static boolean isRetryableStatus(int status) {
         return status == 429 || status == OVERLOADED || (status >= 500 && status < 600);
-    }
-
-    /** Pulls {@code error.message} out of an API error body, falling back to the raw text. */
-    private String errorMessage(String body) {
-        try {
-            JsonNode error = mapper.readTree(body).path("error");
-            String message = error.path("message").asText(null);
-            String type = error.path("type").asText(null);
-            if (message != null && !message.isBlank()) {
-                return (type == null ? "" : type + ": ") + message;
-            }
-        } catch (Exception ignored) {
-            // Not JSON. The raw body below is more useful than a parse complaint.
-        }
-        return body.length() > 300 ? body.substring(0, 300) + "..." : body;
     }
 
     private static long backoffMs(int attempt) {

@@ -26,12 +26,18 @@ if [ ! -f .env ]; then
     exit 1
 fi
 
-# `set -a` exports everything the file defines, which is what makes DOMAIN and
-# CERTBOT_EMAIL visible to the rest of this script without parsing it by hand.
-set -a
-# shellcheck disable=SC1091
-. ./.env
-set +a
+# Dotenv is data, never shell code. Re-enter once with the existing safe loader;
+# explicitly exported variables retain precedence and every argument is preserved.
+if [ "${1:-}" != "--pricepilot-dotenv-loaded" ]; then
+    exec python3 scripts/with-env.py .env bash deploy/init-letsencrypt.sh \
+        --pricepilot-dotenv-loaded "$@"
+fi
+shift
+
+# Check only certificate-bootstrap settings here. This neither contacts a
+# provider nor prints configuration values; it rejects unsafe domain text before
+# that text is used in the container-side shell commands below.
+python3 deploy/check-config.py --tls-bootstrap
 
 DOMAIN="${DOMAIN:-}"
 CERTBOT_EMAIL="${CERTBOT_EMAIL:-}"
@@ -79,19 +85,50 @@ fi
 LIVE_PATH="/etc/letsencrypt/live/${DOMAIN}"
 
 echo "──> Checking for an existing certificate"
-if docker compose run --rm --entrypoint sh certbot \
-       -c "[ -f ${LIVE_PATH}/fullchain.pem ] && [ ! -f ${LIVE_PATH}/.self-signed ]" 2>/dev/null; then
-    echo "A real certificate for ${DOMAIN} already exists."
-    echo "Renewal is handled automatically by the certbot container; nothing to do."
-    exit 0
+# Only this script's marked placeholder may be replaced automatically. Preserve
+# unmarked partial certificate material for operator repair, including broken
+# symlinks and archive/renewal state left by an interrupted certificate request.
+CERT_PROBE=$(cat <<'CERTIFICATE_PROBE'
+exists() { [ -e "$1" ] || [ -L "$1" ]; }
+if [ -f "$1/.self-signed" ]; then
+    if exists "$2" || exists "$3"; then printf incomplete; else printf placeholder; fi
+elif [ -f "$1/fullchain.pem" ] && [ -f "$1/privkey.pem" ]; then
+    printf complete
+elif exists "$1" || exists "$2" || exists "$3"; then
+    printf incomplete
+else
+    printf missing
 fi
+CERTIFICATE_PROBE
+)
+if ! CERT_STATE="$(./deploy/compose.sh run --rm --entrypoint sh certbot -c "$CERT_PROBE" sh \
+        "$LIVE_PATH" "/etc/letsencrypt/archive/${DOMAIN}" "/etc/letsencrypt/renewal/${DOMAIN}.conf")"; then
+    echo "Could not inspect existing certificate state. No certificate files were changed." >&2
+    exit 1
+fi
+case "$CERT_STATE" in
+    complete)
+        echo "An existing certificate and private key are present for ${DOMAIN}."
+        echo "Renewal is handled by the certbot container; no bootstrap replacement is needed."
+        exit 0
+        ;;
+    incomplete)
+        echo "Existing certificate material is incomplete or unmarked. Stop and repair it before retrying; nothing was overwritten or deleted." >&2
+        exit 1
+        ;;
+    missing|placeholder) ;;
+    *)
+        echo "Certificate state could not be verified. No certificate files were changed." >&2
+        exit 1
+        ;;
+esac
 
 echo "──> Writing a temporary self-signed certificate so nginx can start"
 # The marker file is the point of this block. Without it, a second run of this
 # script would find a fullchain.pem, conclude the job was done, and leave the
 # fake certificate in place — a site serving a browser warning that looks exactly
 # like a successful setup from the logs.
-docker compose run --rm --entrypoint sh certbot -c "\
+./deploy/compose.sh run --rm --entrypoint sh certbot -c "\
     mkdir -p '${LIVE_PATH}' && \
     openssl req -x509 -nodes -newkey rsa:2048 -days 1 \
         -keyout '${LIVE_PATH}/privkey.pem' \
@@ -103,14 +140,14 @@ echo "──> Starting nginx with the placeholder"
 # TLS_ENABLED is forced on for this one start regardless of what .env says,
 # because the ACME challenge has to be answered by the config that will later
 # serve the real certificate.
-TLS_ENABLED=true docker compose up -d --build web
+TLS_ENABLED=true ./deploy/compose.sh up -d --build web
 sleep 5
 
 echo "──> Removing the placeholder and requesting the real certificate"
 # Deleted first, deliberately. certbot would otherwise see an existing
 # certificate for this name and ask an interactive question about renewing versus
 # replacing it — which hangs a script nobody is watching.
-docker compose run --rm --entrypoint sh certbot -c "rm -rf '${LIVE_PATH}' '/etc/letsencrypt/archive/${DOMAIN}' '/etc/letsencrypt/renewal/${DOMAIN}.conf'"
+./deploy/compose.sh run --rm --entrypoint sh certbot -c "rm -rf '${LIVE_PATH}' '/etc/letsencrypt/archive/${DOMAIN}' '/etc/letsencrypt/renewal/${DOMAIN}.conf'"
 
 STAGING_FLAG=""
 if [ "$STAGING" != "0" ]; then
@@ -122,7 +159,7 @@ if [ "$STAGING" != "0" ]; then
     STAGING_FLAG="--staging"
 fi
 
-docker compose run --rm --entrypoint certbot certbot \
+./deploy/compose.sh run --rm --entrypoint certbot certbot \
     certonly --webroot -w /var/www/certbot \
     $STAGING_FLAG \
     --email "$CERTBOT_EMAIL" \
@@ -133,17 +170,18 @@ docker compose run --rm --entrypoint certbot certbot \
     --non-interactive
 
 echo "──> Reloading nginx with the real certificate"
-docker compose exec web nginx -s reload
+./deploy/compose.sh exec web nginx -s reload
 
 cat <<MSG
 
 Done. https://${DOMAIN} is live.
 
 Two things left:
-  1. Set TLS_ENABLED=true in .env, so a future 'docker compose up' keeps HTTPS.
-  2. Set APP_PUBLIC_URL and CORS_ALLOWED_ORIGINS to https://${DOMAIN} and run
-     'docker compose up -d app' — otherwise links in alert emails still point at
-     the old address.
+  1. Set TLS_ENABLED=true, APP_PUBLIC_URL=https://${DOMAIN} and
+     CORS_ALLOWED_ORIGINS=https://${DOMAIN} in the server .env.
+  2. Run 'python3 deploy/check-config.py', then recreate app and web using the
+     README deployment instructions. A simple restart does not reload changed environment
+     values. TLS mode now refuses to start if either certificate file is missing.
 
 Renewal needs nothing from you: the certbot container tries twice a day, and the
 web container reloads nginx every six hours to pick up a renewed certificate.

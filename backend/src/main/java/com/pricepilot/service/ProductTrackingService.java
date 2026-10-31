@@ -136,7 +136,7 @@ public class ProductTrackingService {
         // and the extra retailers appear on the product page when they are ready.
         discovery.discoverInBackground(productId);
 
-        return new Added(productId, tracker.getId(), title, canonical.retailer(), true, null);
+        return new Added(productId, tracker.getId(), title, canonical.retailer(), result.paid(), null);
     }
 
     /**
@@ -188,7 +188,7 @@ public class ProductTrackingService {
                         + props.getLimits().getMaxListingsPerProduct() + " retailers."));
 
         refreshWriter.recordSuccess(listing.getId(), result, TriggerSource.ONBOARD);
-        return new Added(productId, null, listing.getTitle(), canonical.retailer(), true, null);
+        return new Added(productId, null, listing.getTitle(), canonical.retailer(), result.paid(), null);
     }
 
     /**

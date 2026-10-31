@@ -30,22 +30,16 @@ DOMAIN="${DOMAIN:-localhost}"
 
 if [ "$TLS_ENABLED" = "true" ]; then
     CERT="/etc/letsencrypt/live/${DOMAIN}/fullchain.pem"
+    KEY="/etc/letsencrypt/live/${DOMAIN}/privkey.pem"
 
-    # The guard that matters.
-    #
-    # With TLS_ENABLED=true and no certificate on disk, nginx exits immediately
-    # with "cannot load certificate" and the container restart-loops. The symptom
-    # — a site that is simply unreachable — gives no hint that the cause is a
-    # missing file, and this is the single most likely way a first deployment
-    # fails. So rather than start and fail, fall back to plain HTTP and say so
-    # loudly in the logs: a site serving over HTTP is recoverable from, and the
-    # message names the script that fixes it.
-    if [ ! -f "$CERT" ]; then
-        echo "10-pick-site.sh: TLS_ENABLED=true but no certificate at ${CERT}." >&2
-        echo "10-pick-site.sh: starting on plain HTTP instead so the site is reachable." >&2
-        echo "10-pick-site.sh: run ./deploy/init-letsencrypt.sh on the host, then restart web." >&2
-        cp "$AVAILABLE/site-http.conf.template" "$TEMPLATES/default.conf.template"
-        exit 0
+    # A requested HTTPS deployment must not silently serve authenticated traffic
+    # over HTTP. Bootstrap uses TLS_ENABLED=false until init-letsencrypt.sh has
+    # written BOTH placeholder files, then starts this TLS configuration.
+    if [ ! -f "$CERT" ] || [ ! -f "$KEY" ]; then
+        echo "10-pick-site.sh: TLS_ENABLED=true requires both fullchain.pem and privkey.pem; refusing to start." >&2
+        echo "10-pick-site.sh: run ./deploy/init-letsencrypt.sh on the host to bootstrap the certificate." >&2
+        echo "10-pick-site.sh: use TLS_ENABLED=false only for an explicit HTTP bootstrap." >&2
+        exit 1
     fi
 
     echo "10-pick-site.sh: serving https for ${DOMAIN}"

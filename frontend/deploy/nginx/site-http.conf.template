@@ -25,6 +25,21 @@ server {
     # public DNS name and on an IP address without being told which.
     server_name _;
 
+    # Variable proxy_pass resolves Docker's current app address on demand after
+    # a container replacement. A literal upstream is resolved only at startup.
+    resolver 127.0.0.11 valid=10s ipv6=off;
+    resolver_timeout 5s;
+    set $app_upstream http://app:8080;
+
+    location = /healthz {
+        allow 127.0.0.1;
+        allow ::1;
+        deny all;
+        access_log off;
+        root /usr/share/nginx/html;
+        try_files /index.html =503;
+    }
+
     # Still served, even here. Someone running without TLS today will point a
     # domain at this box tomorrow, and init-letsencrypt.sh needs this path to
     # answer while the switch to the TLS config has not happened yet.
@@ -38,7 +53,8 @@ server {
     location /api/ {
         limit_req zone=api burst=20 nodelay;
 
-        proxy_pass http://app:8080;
+        # Keep the original path, escaping and query string, including /api/.
+        proxy_pass $app_upstream$request_uri;
 
         proxy_http_version 1.1;
         proxy_set_header Host              $host;
@@ -52,16 +68,21 @@ server {
         # answers. See the TLS config for the full reasoning; the number has to
         # be the same in both or the behaviour changes when TLS is switched on.
         proxy_connect_timeout 10s;
-        proxy_send_timeout    90s;
-        proxy_read_timeout    90s;
+        proxy_send_timeout    205s;
+        proxy_read_timeout    205s;
         proxy_buffering off;
 
         add_header Cache-Control "no-store" always;
     }
 
     location /actuator/health {
-        proxy_pass http://app:8080/actuator/health;
+        proxy_pass $app_upstream$request_uri;
         proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Forwarded-Port $server_port;
         access_log off;
     }
 

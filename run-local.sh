@@ -6,6 +6,7 @@
 set -e
 
 cd "$(dirname "$0")"
+PRICEPILOT_ROOT="$(pwd)"
 
 echo "═══════════════════════════════════════════════════════"
 echo "  PricePilot — Local Development"
@@ -24,7 +25,7 @@ check_command() {
 
 MISSING=0
 check_command java openjdk@17 || MISSING=1
-check_command mvn maven || MISSING=1
+check_command python3 python || MISSING=1
 check_command node node || MISSING=1
 check_command npm node || MISSING=1
 check_command psql postgresql@16 || MISSING=1
@@ -94,7 +95,8 @@ echo ""
 # ── Start backend and frontend together ──
 # Use dev profile (disables scheduler, enables debug logging)
 cd backend
-mvn spring-boot:run -Dspring-boot.run.profiles=dev \
+python3 "$PRICEPILOT_ROOT/scripts/with-env.py" "$PRICEPILOT_ROOT/.env" \
+    ./mvnw spring-boot:run -Dspring-boot.run.profiles=dev \
     -Dspring-boot.run.jvmArguments="-DDB_URL=jdbc:postgresql://localhost:5432/pricepilot -DPOSTGRES_USER=pricepilot -DPOSTGRES_PASSWORD=pricepilot -DJWT_SECRET=dev-only-secret-change-me-this-must-be-32-bytes-or-more" &
 BACKEND_PID=$!
 cd ..

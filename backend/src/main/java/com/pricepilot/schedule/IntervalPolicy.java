@@ -126,10 +126,15 @@ public class IntervalPolicy {
      * inside the minimum interval and breach the politeness guarantee the minimum exists to provide.
      */
     public Instant dueAfter(int intervalMinutes) {
+        return dueAfter(intervalMinutes, Instant.now());
+    }
+
+    /** Schedule from the actual observation time, including a reused observation's original age. */
+    public Instant dueAfter(int intervalMinutes, Instant observedAt) {
         long base = Math.max(1, intervalMinutes) * 60L;
         long spread = (long) (base * JITTER_FRACTION);
         long seconds = spread <= 0 ? base : base + ThreadLocalRandom.current().nextLong(spread + 1);
-        return Instant.now().plusSeconds(seconds);
+        return observedAt.plusSeconds(seconds);
     }
 
     /**

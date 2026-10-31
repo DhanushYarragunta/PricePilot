@@ -29,6 +29,10 @@ RUN npm run build
 # ────────────────────────────── runtime ──────────────────────────────
 FROM nginx:1.27-alpine
 
+# Restrict the official entrypoint's substitution to the one template setting.
+# nginx variables such as $request_uri and $app_upstream must remain untouched.
+ENV NGINX_ENVSUBST_FILTER="^DOMAIN$"
+
 # Alpine is right here in a way it was not for the JVM: nginx is a C binary with
 # no runtime to surprise anybody, and the image is 50 MB instead of 190 MB.
 
@@ -55,6 +59,8 @@ COPY deploy/nginx/10-pick-site.sh /docker-entrypoint.d/10-pick-site.sh
 # machine and not another.
 RUN chmod +x /docker-entrypoint.d/10-pick-site.sh
 
+# Remove nginx's stock index so a missing application index cannot pass health.
+RUN rm -rf /usr/share/nginx/html/*
 COPY --from=build /build/dist /usr/share/nginx/html
 
 # A writable directory for the ACME challenge files certbot drops here. The
@@ -64,10 +70,8 @@ RUN mkdir -p /var/www/certbot
 
 EXPOSE 80 443
 
-# Checking the app's own index rather than nginx's default page: a 200 from
-# /index.html proves the build output is actually present, which is the failure
-# this will realistically catch — an empty dist directory from a build that
-# half-succeeded. `127.0.0.1` rather than `localhost` avoids an IPv6 lookup
-# inside a container that may not have one.
+# /healthz checks index.html locally without redirecting to HTTPS. The probe
+# therefore works before certificate bootstrap and with TLS enabled, and fails
+# when the application build is missing. Backend readiness is checked separately.
 HEALTHCHECK --interval=30s --timeout=4s --start-period=10s --retries=3 \
-    CMD wget -q --spider http://127.0.0.1/index.html || exit 1
+    CMD wget -q --spider http://127.0.0.1/healthz || exit 1

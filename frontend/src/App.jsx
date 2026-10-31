@@ -198,7 +198,7 @@ function SiteFooter() {
         {supportedRetailers.length > 0 ? (
           <span className="faint">{supportedRetailers.join(', ')}</span>
         ) : null}
-        {aiEnabled ? <span className="faint">Verdicts by Claude</span> : null}
+        {aiEnabled ? <span className="faint">AI deal analysis enabled</span> : null}
         {emailEnabled ? null : <span className="faint">Email alerts are off on this deployment</span>}
       </div>
     </footer>

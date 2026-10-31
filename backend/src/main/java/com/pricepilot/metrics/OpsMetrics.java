@@ -31,7 +31,8 @@ public record OpsMetrics(
         List<HostStat> hosts,
         List<StrategyStat> strategies,
         List<OutcomeStat> outcomes,
-        List<SpendStat> spend) {
+        List<SpendStat> spend,
+        ScrapeMetrics.Snapshot optimization) {
 
     /**
      * How much there is to track and how much of it is healthy.
@@ -65,7 +66,8 @@ public record OpsMetrics(
      * or failed at extraction; counting those as successes would inflate this number by exactly the
      * amount of caching done, which would be measuring the wrong thing twice.
      *
-     * @param networkRequests     attempts that actually fetched a page
+     * @param networkRequests     legacy field: recorded non-skipped checks, which may fail before
+     *                            submission; use optimization for actual BrowserAct submissions
      * @param successes           attempts that returned a usable price
      * @param successRatePercent  {@code successes / networkRequests}, 0 when nothing was attempted
      * @param averageLatencyMs    mean wall-clock time of a successful fetch and parse
@@ -82,7 +84,8 @@ public record OpsMetrics(
      *
      * <p>The honest reading of {@code loadReductionPercent}: the baseline is <em>modelled</em> — the
      * requests that checking today's active listings once an hour would cost — while the actual
-     * figure is <em>measured</em> from attempt rows over the window. It is a comparison against a
+     * figure counts historical check rows over the window, including pre-submission failures.
+     * It cannot establish actual network savings. It is a comparison against a
      * named alternative, not against a previous version of this system, and it is stated that way
      * everywhere it appears.
      *

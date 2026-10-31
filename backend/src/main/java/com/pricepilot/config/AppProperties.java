@@ -74,32 +74,81 @@ public class AppProperties {
     // -------------------------------------------------------------------- ai
 
     public static class Ai {
+        private String provider = "anthropic";
         private String apiKey = "";
-        private String model = "claude-haiku-4-5";
-        private String baseUrl = "https://api.anthropic.com";
+        private String model = "";
+        private String baseUrl = "";
+        private String anthropicApiKey = "";
+        private String anthropicModel = "claude-haiku-4-5";
+        private String anthropicBaseUrl = "https://api.anthropic.com";
         private String apiVersion = "2023-06-01";
-        private int maxTokens = 1200;
+        private int maxTokens = 0;
         private int timeoutMs = 45000;
+        private String reasoningEffort = "low";
+        private int monthlyCallBudget = 100;
+        private BigDecimal inputUsdPerMillion;
+        private BigDecimal outputUsdPerMillion;
+        private BigDecimal cachedInputUsdPerMillion;
         private BigDecimal monthlyBudgetUsd = new BigDecimal("5.00");
         /** Skip re-analysis unless the price moved at least this fraction. */
         private double reanalysisPriceDelta = 0.02;
         private int reanalysisMinAgeHours = 12;
 
-        /** Analysis is simply disabled, not broken, when no key is present. */
-        public boolean isConfigured() { return apiKey != null && !apiKey.isBlank(); }
+        /** A compatible provider never inherits the Anthropic key, host or model. */
+        public boolean isConfigured() {
+            if ((!isAnthropic() && !isOpenAiCompatible()) || getApiKey().isBlank()
+                    || getApiKey().chars().anyMatch(Character::isWhitespace)
+                    || getModel().isBlank() || getBaseUrl().isBlank()) return false;
+            try {
+                java.net.URI uri = java.net.URI.create(getBaseUrl());
+                return "https".equalsIgnoreCase(uri.getScheme()) && uri.getHost() != null
+                        && uri.getUserInfo() == null && uri.getQuery() == null && uri.getFragment() == null
+                        && getMaxTokens() > 0 && timeoutMs > 0;
+            } catch (IllegalArgumentException e) {
+                return false;
+            }
+        }
 
-        public String getApiKey() { return apiKey; }
+        public boolean isAnthropic() { return "anthropic".equalsIgnoreCase(provider); }
+        public boolean isOpenAiCompatible() { return "openai-compatible".equalsIgnoreCase(provider); }
+        public boolean hasConfiguredPricing() {
+            return inputUsdPerMillion != null && inputUsdPerMillion.signum() >= 0
+                    && outputUsdPerMillion != null && outputUsdPerMillion.signum() >= 0;
+        }
+        private static String valueOr(String value, String fallback) {
+            return value != null && !value.isBlank() ? value.trim() : fallback == null ? "" : fallback.trim();
+        }
+
+        public String getProvider() { return provider; }
+        public void setProvider(String provider) { this.provider = provider; }
+        public String getApiKey() { return valueOr(apiKey, isAnthropic() ? anthropicApiKey : ""); }
         public void setApiKey(String apiKey) { this.apiKey = apiKey; }
-        public String getModel() { return model; }
+        public String getModel() { return valueOr(model, isAnthropic() ? anthropicModel : ""); }
         public void setModel(String model) { this.model = model; }
-        public String getBaseUrl() { return baseUrl; }
+        public String getBaseUrl() { return valueOr(baseUrl, isAnthropic() ? anthropicBaseUrl : ""); }
         public void setBaseUrl(String baseUrl) { this.baseUrl = baseUrl; }
+        public String getAnthropicApiKey() { return anthropicApiKey; }
+        public void setAnthropicApiKey(String key) { this.anthropicApiKey = key; }
+        public String getAnthropicModel() { return anthropicModel; }
+        public void setAnthropicModel(String model) { this.anthropicModel = model; }
+        public String getAnthropicBaseUrl() { return anthropicBaseUrl; }
+        public void setAnthropicBaseUrl(String url) { this.anthropicBaseUrl = url; }
         public String getApiVersion() { return apiVersion; }
         public void setApiVersion(String apiVersion) { this.apiVersion = apiVersion; }
-        public int getMaxTokens() { return maxTokens; }
+        public int getMaxTokens() { return maxTokens == 0 ? (isOpenAiCompatible() ? 4096 : 1200) : maxTokens; }
         public void setMaxTokens(int maxTokens) { this.maxTokens = maxTokens; }
         public int getTimeoutMs() { return timeoutMs; }
         public void setTimeoutMs(int timeoutMs) { this.timeoutMs = timeoutMs; }
+        public String getReasoningEffort() { return reasoningEffort; }
+        public void setReasoningEffort(String effort) { this.reasoningEffort = effort; }
+        public int getMonthlyCallBudget() { return monthlyCallBudget; }
+        public void setMonthlyCallBudget(int budget) { this.monthlyCallBudget = budget; }
+        public BigDecimal getInputUsdPerMillion() { return inputUsdPerMillion; }
+        public void setInputUsdPerMillion(BigDecimal rate) { this.inputUsdPerMillion = rate; }
+        public BigDecimal getOutputUsdPerMillion() { return outputUsdPerMillion; }
+        public void setOutputUsdPerMillion(BigDecimal rate) { this.outputUsdPerMillion = rate; }
+        public BigDecimal getCachedInputUsdPerMillion() { return cachedInputUsdPerMillion; }
+        public void setCachedInputUsdPerMillion(BigDecimal rate) { this.cachedInputUsdPerMillion = rate; }
         public BigDecimal getMonthlyBudgetUsd() { return monthlyBudgetUsd; }
         public void setMonthlyBudgetUsd(BigDecimal monthlyBudgetUsd) { this.monthlyBudgetUsd = monthlyBudgetUsd; }
         public double getReanalysisPriceDelta() { return reanalysisPriceDelta; }
@@ -140,6 +189,7 @@ public class AppProperties {
         private int maxRetries = 2;
         private int maxResponseBytes = 4 * 1024 * 1024;
         private int freshnessWindowSeconds = 900;
+        private int cacheMaxEntries = 2000;
         /** none | scraperapi | scrapingbee */
         private String provider = "none";
         private String providerApiKey = "";
@@ -167,6 +217,8 @@ public class AppProperties {
         public void setMaxResponseBytes(int maxResponseBytes) { this.maxResponseBytes = maxResponseBytes; }
         public int getFreshnessWindowSeconds() { return freshnessWindowSeconds; }
         public void setFreshnessWindowSeconds(int freshnessWindowSeconds) { this.freshnessWindowSeconds = freshnessWindowSeconds; }
+        public int getCacheMaxEntries() { return Math.max(1, Math.min(100000, cacheMaxEntries)); }
+        public void setCacheMaxEntries(int cacheMaxEntries) { this.cacheMaxEntries = cacheMaxEntries; }
         public String getProvider() { return provider; }
         public void setProvider(String provider) { this.provider = provider; }
         public String getProviderApiKey() { return providerApiKey; }
@@ -183,6 +235,8 @@ public class AppProperties {
 
     public static class Scheduler {
         private boolean enabled = true;
+        /** Allowed completion time after the immutable scheduled due time, for freshness metrics. */
+        private int freshnessGraceSeconds = 300;
         private int tickSeconds = 120;
         private int minIntervalMinutes = 60;
         private int maxIntervalMinutes = 1440;
@@ -209,6 +263,8 @@ public class AppProperties {
 
         public boolean isEnabled() { return enabled; }
         public void setEnabled(boolean enabled) { this.enabled = enabled; }
+        public int getFreshnessGraceSeconds() { return freshnessGraceSeconds; }
+        public void setFreshnessGraceSeconds(int seconds) { this.freshnessGraceSeconds = seconds; }
         public int getTickSeconds() { return tickSeconds; }
         public void setTickSeconds(int tickSeconds) { this.tickSeconds = tickSeconds; }
         public int getMinIntervalMinutes() { return minIntervalMinutes; }
@@ -279,17 +335,11 @@ public class AppProperties {
 
     // ---------------------------------------------------------------- browseract
 
-    /**
-     * BrowserAct integration for headless browser-based price extraction.
-     *
-     * <p>Used for retailers that block direct HTTP requests (e.g. Amazon.in).
-     * BrowserAct runs a pre-built Bot using a real browser with anti-bot bypass,
-     * extracting the correct selling price, MRP, and product details.
-     */
+    /** One BrowserAct workflow extracts validated product data for every retailer. */
     public static class BrowserAct {
         /** API key for authenticating with BrowserAct. Never log or expose this. */
         private String apiKey = "";
-        /** The workflow/Bot ID that extracts Amazon.in product data. */
+        /** Shared workflow ID, used unchanged for every supported retailer. */
         private String workflowId = "";
         /** Request timeout in milliseconds. BrowserAct Bots can take 30-60s. */
         private int timeoutMs = 90000;

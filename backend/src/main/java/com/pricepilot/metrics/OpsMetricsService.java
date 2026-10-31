@@ -14,7 +14,6 @@ import com.pricepilot.schedule.IntervalPolicy;
 import com.pricepilot.schedule.ScheduleDispatcher;
 import com.pricepilot.scrape.rules.DomainRules;
 import com.pricepilot.usage.BudgetGuard;
-import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -26,7 +25,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Computes the project's self-reported numbers from the rows it has written.
+ * Combines historical recorded checks with explicitly scoped process-local submission counters.
  *
  * <p>This service exists because of a specific failure mode. A project that claims "78% extraction
  * accuracy across 10+ sites" on a CV has to be able to answer "how do you know?" — and the only
@@ -59,6 +58,7 @@ public class OpsMetricsService {
     private final BudgetGuard budget;
     private final ScheduleDispatcher dispatcher;
     private final AppProperties props;
+    private final ScrapeMetrics scrapeMetrics;
 
     public OpsMetricsService(ScrapeAttemptRepository attempts,
                              ListingRepository listings,
@@ -69,7 +69,8 @@ public class OpsMetricsService {
                              DomainRules rules,
                              BudgetGuard budget,
                              ScheduleDispatcher dispatcher,
-                             AppProperties props) {
+                             AppProperties props,
+                             ScrapeMetrics scrapeMetrics) {
         this.attempts = attempts;
         this.listings = listings;
         this.trackers = trackers;
@@ -80,6 +81,7 @@ public class OpsMetricsService {
         this.budget = budget;
         this.dispatcher = dispatcher;
         this.props = props;
+        this.scrapeMetrics = scrapeMetrics;
     }
 
     public OpsMetrics snapshot() {
@@ -117,7 +119,8 @@ public class OpsMetricsService {
                 hosts(since),
                 strategies(since),
                 outcomes,
-                spend());
+                spend(),
+                scrapeMetrics.snapshot());
     }
 
     // ------------------------------------------------------------------ blocks
@@ -136,17 +139,15 @@ public class OpsMetricsService {
     }
 
     /**
-     * The load-reduction figure, computed the way it is described.
+     * Legacy estimate retained for API compatibility, not a measured before/after request reduction.
      *
      * <p>Baseline: the current count of active listings, checked once every
-     * {@link IntervalPolicy#BASELINE_INTERVAL_MINUTES}. Actual: network requests genuinely made over
-     * the window, divided by the window length. Both are requests per day, so the ratio is
-     * meaningful.
+     * {@link IntervalPolicy#BASELINE_INTERVAL_MINUTES}. Historical attempt rows include checks
+     * refused before a submission, so they cannot reconstruct actual outbound requests. Accurate
+     * BrowserAct submission counts are exposed separately in optimization, scoped to this process.
      *
-     * <p>Two caveats are built into how this is presented rather than hidden. The baseline is over
-     * <em>today's</em> listing set while the actual is over the window's history, so a system that
-     * has grown a lot recently will understate its own saving. And with no active listings there is
-     * nothing to compare, so the figure is zero rather than a division by zero dressed up as 100%.
+     * <p>The listing population can change during the window, further limiting this estimate.
+     * No active listings means there is no useful comparison, so this legacy field stays zero.
      */
     private OpsMetrics.Load load(int days, long networkRequests, long skipped) {
         long activeListings = listings.countByStatus(ListingStatus.ACTIVE);
@@ -211,9 +212,7 @@ public class OpsMetricsService {
 
     private OpsMetrics.SchedulerHealth schedulerHealth() {
         AppProperties.Scheduler cfg = props.getScheduler();
-        // Asks for one page large enough to tell "a handful" from "a backlog" without loading the
-        // whole overdue set into memory just to count it.
-        long dueNow = listings.findDue(Instant.now(), PageRequest.of(0, 500)).size();
+        long dueNow = listings.countDue(Instant.now());
         return new OpsMetrics.SchedulerHealth(
                 dispatcher.isEnabled(),
                 cfg.getTickSeconds(),
@@ -268,8 +267,11 @@ public class OpsMetricsService {
                     usage.getCalls(),
                     usage.getInputTokens(),
                     usage.getOutputTokens(),
-                    usage.getCostUsd() == null
-                            ? BigDecimal.ZERO
+                    // Router prices can change independently of the underlying model. The
+                    // aggregate cannot distinguish unpriced calls from priced ones, so it must
+                    // not present a partial/zero estimate as the router's complete bill.
+                    "OPENAI_COMPATIBLE".equals(usage.getProvider().name()) ? null
+                            : usage.getCostUsd() == null ? BigDecimal.ZERO
                             : usage.getCostUsd().setScale(4, RoundingMode.HALF_UP)));
         }
         return stats;
